@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+client/dist/
+client/tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Logs
+*.log
+dev.log
+
+# Runtime / user data (local notes store)
+notes/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
