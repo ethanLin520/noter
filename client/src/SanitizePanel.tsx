@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { sanitize, sanitizeReply, type SanitizeResponse } from "./api";
+
+const REMARK_PLUGINS = [remarkGfm];
 
 interface SanitizePanelProps {
   notes: string;
@@ -130,7 +134,9 @@ export default function SanitizePanel({ notes, onAccept, onClose }: SanitizePane
         {phase === "preview" && (
           <div className="modal-body">
             <p className="muted">Polished result — review before accepting:</p>
-            <pre className="preview">{polished}</pre>
+            <div className="editor-rendered modal-rendered">
+              <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{polished}</ReactMarkdown>
+            </div>
             <div className="modal-actions">
               <button className="btn-secondary" onClick={onClose}>
                 Discard

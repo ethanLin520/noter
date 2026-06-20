@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Editor, { type EditorMode } from "./Editor";
 import SanitizePanel from "./SanitizePanel";
 import Sidebar from "./Sidebar";
+import SummaryPanel from "./SummaryPanel";
 import TrashPanel from "./TrashPanel";
 import {
   getTree,
@@ -10,6 +11,7 @@ import {
   saveNote,
   searchNotes,
   type SearchResult,
+  type SortMode,
   type Tree,
 } from "./api";
 
@@ -50,6 +52,11 @@ function initialSidebarWidth(): number {
   return SIDEBAR_DEFAULT;
 }
 
+function initialSortMode(): SortMode {
+  const stored = localStorage.getItem("sortMode");
+  return stored === "created-asc" || stored === "name" ? stored : "created-desc";
+}
+
 export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
   const dragging = useRef(false);
@@ -57,7 +64,9 @@ export default function App() {
   const [notes, setNotes] = useState("");
   const [current, setCurrent] = useState<OpenNote | null>(null);
   const [tree, setTree] = useState<Tree>(EMPTY_TREE);
+  const [sortMode, setSortMode] = useState<SortMode>(initialSortMode);
   const [showSanitize, setShowSanitize] = useState(false);
+  const [summaryFolder, setSummaryFolder] = useState<string | null>(null);
   const [showTrash, setShowTrash] = useState(false);
   const [status, setStatus] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -72,12 +81,17 @@ export default function App() {
   const dirtyAgain = useRef(false);
 
   const refreshTree = useCallback(() => {
-    getTree()
+    getTree(sortMode)
       .then(setTree)
       .catch(() => setTree(EMPTY_TREE));
-  }, []);
+  }, [sortMode]);
 
   useEffect(refreshTree, [refreshTree]);
+
+  const changeSort = useCallback((next: SortMode) => {
+    setSortMode(next);
+    localStorage.setItem("sortMode", next);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(sidebarWidth));
@@ -135,6 +149,7 @@ export default function App() {
         await saveNote(active.folder, stripExt(active.name), notes);
       } else {
         // Brand-new note: create under a unique name so we never clobber an existing file.
+        // Top-level new notes are filed as unfiled.
         const { folder, name } = await saveNote("", desired || "untitled", notes, true);
         active = { folder, name };
         setCurrent(active);
@@ -277,6 +292,7 @@ export default function App() {
           ({ name } = await saveNote(current.folder, stripExt(current.name), markdown));
         } else {
           // Brand-new note: create under a unique name to avoid clobbering a sibling.
+          // Top-level new notes are filed as unfiled.
           const saved = await saveNote("", title.trim() || "untitled", markdown, true);
           name = saved.name;
           setCurrent({ folder: saved.folder, name });
@@ -293,6 +309,24 @@ export default function App() {
     [current, title, refreshTree, flash],
   );
 
+  // Save a folder roll-up as a note inside that folder, then open it.
+  const handleSaveSummary = useCallback(
+    async (markdown: string) => {
+      const folder = summaryFolder;
+      if (!folder) return;
+      setSummaryFolder(null);
+      try {
+        const { folder: f, name } = await saveNote(folder, `${folder} Summary`, markdown);
+        refreshTree();
+        await handleOpen(f, name);
+        flash(`Saved ${stripExt(name)}`);
+      } catch (e) {
+        flash(`Summary save failed: ${e instanceof Error ? e.message : e}`);
+      }
+    },
+    [summaryFolder, refreshTree, handleOpen, flash],
+  );
+
   return (
     <div className="app" style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}>
       <Sidebar
@@ -302,7 +336,10 @@ export default function App() {
         onOpenTrash={() => setShowTrash(true)}
         reload={refreshTree}
         onCurrentChanged={handleCurrentChanged}
+        onSummarizeFolder={setSummaryFolder}
         flash={flash}
+        sortMode={sortMode}
+        onChangeSort={changeSort}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         searchResults={searchResults}
@@ -367,6 +404,14 @@ export default function App() {
           notes={notes}
           onAccept={handleAcceptSanitized}
           onClose={() => setShowSanitize(false)}
+        />
+      )}
+
+      {summaryFolder && (
+        <SummaryPanel
+          folder={summaryFolder}
+          onSave={handleSaveSummary}
+          onClose={() => setSummaryFolder(null)}
         />
       )}
 

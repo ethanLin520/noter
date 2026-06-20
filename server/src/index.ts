@@ -8,9 +8,12 @@ import { runClaude, ClaudeError } from "./claude.js";
 import {
   AUTOCOMPLETE_SYSTEM,
   SANITIZE_SYSTEM,
+  SUMMARIZE_SYSTEM,
   buildAutocompletePrompt,
   buildSanitizePrompt,
   buildSanitizeReplyPrompt,
+  buildFolderSummaryPrompt,
+  buildSummaryRefinePrompt,
 } from "./prompts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +24,8 @@ const PORT = Number(process.env.PORT ?? 23456);
 
 const AUTOCOMPLETE_MODEL = "haiku";
 const SANITIZE_MODEL = "claude-opus-4-8";
+// Summarizing a whole folder feeds many notes at once, so allow a longer run.
+const SUMMARIZE_TIMEOUT_MS = 300_000;
 
 const app = express();
 app.use(cors());
@@ -49,6 +54,11 @@ function safeFileName(name: string): string {
   const cleaned = base.replace(/[^a-zA-Z0-9 _.-]/g, "").replace(/\s+/g, "-");
   const stem = cleaned.replace(/\.md$/i, "") || "untitled";
   return `${stem}.md`;
+}
+
+/** The reserved `.md` filename used for a folder's roll-up summary. */
+function summaryFileName(folderName: string): string {
+  return safeFileName(`${folderName} Summary`);
 }
 
 /** Turn an arbitrary folder label into a safe single-segment folder name. */
@@ -192,13 +202,97 @@ app.post(
   }),
 );
 
+// --- Folder summarize: roll a week's notes into one digest (Opus) -----------
+app.post(
+  "/api/folder/summarize",
+  handler(async (req, res) => {
+    const { folder = "" } = req.body ?? {};
+    const folderName = folder ? safeFolderName(String(folder)) : "";
+    if (!folderName) {
+      res.status(400).json({ error: "invalid folder name" });
+      return;
+    }
+    const dir = resolveInNotes(folderName);
+    // Skip the folder's own summary note so it never feeds its own output back in.
+    const summaryFile = summaryFileName(folderName).toLowerCase();
+    const names = (await listMd(dir, "name")).filter((n) => n.toLowerCase() !== summaryFile);
+    if (names.length === 0) {
+      res.status(400).json({ error: "no notes to summarize in this folder" });
+      return;
+    }
+    const notes = await Promise.all(
+      names.map(async (name) => ({
+        name: name.replace(/\.md$/i, ""),
+        content: await fs.readFile(resolveInNotes(folderName, name), "utf8"),
+      })),
+    );
+    const r = await runClaude({
+      prompt: buildFolderSummaryPrompt(notes),
+      model: SANITIZE_MODEL,
+      appendSystemPrompt: SUMMARIZE_SYSTEM,
+      timeoutMs: SUMMARIZE_TIMEOUT_MS,
+    });
+    res.json({ result: r.result, sessionId: r.sessionId });
+  }),
+);
+
+// --- Folder summarize reply: steer the digest within the same session -------
+app.post(
+  "/api/folder/summarize/reply",
+  handler(async (req, res) => {
+    const { sessionId, instruction = "" } = req.body ?? {};
+    if (typeof sessionId !== "string" || !sessionId) {
+      res.status(400).json({ error: "sessionId is required" });
+      return;
+    }
+    if (typeof instruction !== "string" || !instruction.trim()) {
+      res.status(400).json({ error: "instruction is required" });
+      return;
+    }
+    const r = await runClaude({
+      prompt: buildSummaryRefinePrompt(instruction),
+      model: SANITIZE_MODEL,
+      appendSystemPrompt: SUMMARIZE_SYSTEM,
+      sessionId,
+      timeoutMs: SUMMARIZE_TIMEOUT_MS,
+    });
+    res.json({ result: r.result, sessionId: r.sessionId });
+  }),
+);
+
 // --- Notes & folders: file management ---------------------------------------
 
+type SortMode = "created-desc" | "created-asc" | "name";
+
+function parseSort(raw: unknown): SortMode {
+  return raw === "created-asc" || raw === "name" ? raw : "created-desc";
+}
+
+/** Sort `.md` filenames in `dir` by the chosen mode. "created" uses file birthtime. */
+async function sortNotes(dir: string, names: string[], sort: SortMode): Promise<string[]> {
+  if (sort === "name") return [...names].sort((a, b) => a.localeCompare(b));
+  const withTime = await Promise.all(
+    names.map(async (name) => {
+      let t = 0;
+      try {
+        const s = await fs.stat(path.join(dir, name));
+        t = s.birthtimeMs || s.ctimeMs;
+      } catch {
+        /* missing/unreadable file sorts as oldest */
+      }
+      return { name, t };
+    }),
+  );
+  withTime.sort((a, b) => (sort === "created-asc" ? a.t - b.t : b.t - a.t));
+  return withTime.map((x) => x.name);
+}
+
 /** List `.md` files in a directory, sorted; tolerates a missing dir. */
-async function listMd(dir: string): Promise<string[]> {
+async function listMd(dir: string, sort: SortMode): Promise<string[]> {
   try {
     const entries = await fs.readdir(dir);
-    return entries.filter((f) => f.toLowerCase().endsWith(".md")).sort();
+    const names = entries.filter((f) => f.toLowerCase().endsWith(".md"));
+    return sortNotes(dir, names, sort);
   } catch {
     return [];
   }
@@ -207,14 +301,15 @@ async function listMd(dir: string): Promise<string[]> {
 // Full sidebar state in one call.
 app.get(
   "/api/tree",
-  handler(async (_req, res) => {
+  handler(async (req, res) => {
+    const sort = parseSort(req.query.sort);
     await fs.mkdir(NOTES_DIR, { recursive: true });
     const entries = await fs.readdir(NOTES_DIR, { withFileTypes: true });
 
-    const unfiled = entries
+    const unfiledNames = entries
       .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".md"))
-      .map((e) => e.name)
-      .sort();
+      .map((e) => e.name);
+    const unfiled = await sortNotes(NOTES_DIR, unfiledNames, sort);
 
     const folderNames = entries
       .filter((e) => e.isDirectory() && !e.name.startsWith("."))
@@ -224,7 +319,7 @@ app.get(
     const folders = await Promise.all(
       folderNames.map(async (name) => ({
         name,
-        notes: await listMd(path.join(NOTES_DIR, name)),
+        notes: await listMd(path.join(NOTES_DIR, name), sort),
       })),
     );
 
@@ -255,7 +350,7 @@ app.get(
       .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".md"))
       .map((e): [string, string] => ["", e.name]);
     for (const folder of folderNames) {
-      for (const name of await listMd(path.join(NOTES_DIR, folder))) {
+      for (const name of await listMd(path.join(NOTES_DIR, folder), "name")) {
         files.push([folder, name]);
       }
     }
@@ -353,6 +448,12 @@ app.post(
       return;
     }
     const fileName = safeFileName(String(name));
+    // The folder's summary note name is owned by the summarize feature so its
+    // overwrite-on-rerun save can never clobber a hand-authored note.
+    if (folderName && fileName.toLowerCase() === summaryFileName(folderName).toLowerCase()) {
+      res.status(409).json({ error: "that name is reserved for the folder summary" });
+      return;
+    }
     const dir = folderName ? resolveInNotes(folderName) : NOTES_DIR;
     await fs.mkdir(dir, { recursive: true });
     const target = resolveInNotes(folderName, fileName);
@@ -382,6 +483,11 @@ app.post(
     const folderName = folder ? safeFolderName(String(folder)) : "";
     if (folder && !folderName) {
       res.status(400).json({ error: "invalid folder name" });
+      return;
+    }
+    // The folder's summary note name is reserved for the summarize feature.
+    if (folderName && safeFileName(newName).toLowerCase() === summaryFileName(folderName).toLowerCase()) {
+      res.status(409).json({ error: "that name is reserved for the folder summary" });
       return;
     }
     const dir = folderName ? resolveInNotes(folderName) : NOTES_DIR;
@@ -495,7 +601,7 @@ app.post(
     const dir = resolveInNotes(folderName);
     await fs.mkdir(TRASH_DIR, { recursive: true });
     const manifest = await readManifest();
-    for (const fileName of await listMd(dir)) {
+    for (const fileName of await listMd(dir, "name")) {
       const id = makeId();
       await fs.rename(path.join(dir, fileName), path.join(TRASH_DIR, `${id}.md`));
       manifest.push({

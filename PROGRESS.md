@@ -4,7 +4,7 @@ Local, personal note-taking app for work meetings. Type fast/shorthand notes, ge
 real-time autocomplete corrections and a post-meeting "sanitize" polish. Notes are saved
 as `.md` files on disk. Local-only, single-user, no auth, no deploy.
 
-_Last updated: 2026-06-16 — added folder rename (`POST /api/folder/rename`, `renameFolder` helper, ✎ button on the folder row); errors on name collision, sanitizes via `safeFolderName`, updates the open note's folder if affected_
+_Last updated: 2026-06-20 — replaced native `window.prompt`/`window.confirm` for rename/delete: **rename is now inline** in the sidebar (`InlineInput` gained an `initial` prop + select-on-focus; `renaming` state in `Sidebar.tsx`), and **delete uses a `ConfirmDialog` modal** (new `client/src/Dialog.tsx`, red Delete button) — also backing the recycle bin's Delete-forever/Empty-bin. Added **note sorting** (default newest-created first; sidebar button cycles Newest/Oldest/Name; `GET /api/tree?sort=`, persisted in `localStorage`) and fixed sidebar/main to **scroll independently** (`.app` grid row `minmax(0,1fr)` + `overflow:hidden`). Also made create **VSCode-style inline in tree position** (new-note row in Unfiled, new-folder row atop Folders). Post-review fixes: the per-folder summary filename (`<folder> Summary.md`) is now **reserved** — `POST /api/note/{create,rename}` return 409 for it (via `summaryFileName()`), so the summary's overwrite-on-rerun save can never clobber a hand-authored note; and inline create now clears its row up front so a failed create surfaces the error consistently (matching inline rename). Earlier this session: new top-level notes land in **Unfiled** instead of an auto-created weekly folder (removed `client/src/week.ts`); folder summarize via `POST /api/folder/summarize` + `SummaryPanel.tsx`._
 
 ---
 
@@ -24,9 +24,35 @@ Working and verified end-to-end:
 - **Post-meeting sanitize** — stronger model polishes the whole note into Markdown without
   changing meaning; asks clarifying questions via a `QUESTIONS:` block (multi-turn resume loop)
   rather than guessing.
+- **Folder summarize** — ✨ on a folder row rolls every note in that folder up into one weekly
+  digest (Opus). `SummaryPanel` previews the result; "Save to folder" writes a canonical
+  `<folder> Summary.md` inside that folder (overwritten on re-run) and opens it. The summarizer
+  skips the folder's own summary note so it never feeds its own output back in. Grounded-only
+  prompt (`SUMMARIZE_SYSTEM`) — sections for overview / decisions / action items / open questions
+  / themes; never invents. **Steerable regenerate**: a text box in the preview lets you give an
+  instruction (e.g. "focus on decisions", "make it shorter"); it resumes the summary session via
+  `POST /api/folder/summarize/reply` to revise the existing digest. An empty box re-summarizes
+  from scratch (new session).
+- **New notes are unfiled** — new **top-level** notes (⌘N and the top "+ Note") are created as
+  unfiled (folder `""`); the user files them manually via drag-and-drop or move. Explicit
+  "+ Note in folder" still creates inside the chosen folder. (Removed the prior weekly
+  auto-foldering / `client/src/week.ts`.)
+- **VSCode-style inline create** — "+ Note" shows a naming input as a row in the Unfiled list;
+  "+ Folder" shows one as a new folder row at the top of the Folders area; "+ Note in folder"
+  shows one inside that folder. All use `InlineInput` (Enter saves, Esc/blur cancels); an empty
+  folder name just cancels. The inputs render in their tree position, not under the buttons.
 - **Note & folder management** — create / rename / move / delete notes; create / rename / delete
   single-level folders (rename errors on name collision, no merge); recycle bin with restore /
-  permanent-delete / empty-bin (manual, nothing auto-purges).
+  permanent-delete / empty-bin (manual, nothing auto-purges). **Rename is inline** (the sidebar
+  name becomes an editable `InlineInput`, prefilled + selected; Enter saves, Esc/blur cancels).
+  **Delete is a confirm modal** (`ConfirmDialog` in `client/src/Dialog.tsx`) with a red Delete
+  button; same dialog backs the recycle bin's Delete-forever / Empty-bin. No more native
+  `window.prompt` / `window.confirm`.
+- **Note sorting** — notes sort by **creation date, newest first** by default. A small button in
+  the sidebar actions cycles the order: Newest first (`↓`) → Oldest first (`↑`) → Name A–Z (`A`).
+  Server-side (`GET /api/tree?sort=created-desc|created-asc|name`, default `created-desc`, uses
+  file birthtime); the choice persists in `localStorage` (`sortMode`). Folders themselves stay
+  name-sorted; sort applies to notes within Unfiled and within each folder.
 - **Drag-and-drop** — drag a note onto a folder (or "Unfiled") to move it. Menu move still works.
 - **Resizable sidebar** — drag the sidebar/main boundary to resize (160–520px); width persists
   in `localStorage` (`sidebarWidth`). Handled in `App.tsx` (`.sidebar-resizer` overlay).
@@ -63,6 +89,14 @@ build-verified, not yet click-tested in the browser.
   caret mapped to the clicked source position (best-effort, falls back to the clicked block start).
 - **Folders** = single level only (no nesting). **Move UX** = `⋯` menu + drag-and-drop.
   **Recycle bin** = manual restore/purge (no auto-purge by age).
+- **Weekly folders** = named by the week's **Monday** date (`YYYY-MM-DD`), chosen over ISO-week
+  (`2026-W25`) and human labels ("Week of Jun 16") because it sorts chronologically in the
+  alphabetical sidebar and matches the `YYYY-MM-DD-*` note titles. Auto-filing applies only to
+  **new top-level** notes (not "+ Note in folder", not existing notes — no retroactive backfill).
+- **Folder summary** = ✨ icon on the folder row (chosen over a `⋯` menu for one-click
+  discoverability of a headline feature). Output = **preview then save** as a note (vs. copy-only
+  or a new note per run); a single living `<folder> Summary.md` overwritten on re-run. One-shot
+  (no `QUESTIONS:` loop) — a digest doesn't need sanitize's meaning-preserving Q&A.
 - **Saving** = full autosave (debounced) + indicator, chosen over manual-only. **Title** =
   renames the open file in place (not a new file). **Search** = server-side content + filename
   (not client filename-only). **`⌘K`** = focus sidebar search (no separate command palette).
@@ -83,15 +117,19 @@ build-verified, not yet click-tested in the browser.
 
 ### Server (`server/src/`)
 - **`index.ts`** — Express app. Routes: `GET /api/health`; `POST /api/autocomplete`;
-  `POST /api/sanitize` + `POST /api/sanitize/reply`; `GET /api/search`; file mgmt: `GET /api/tree`, `POST /api/save`,
+  `POST /api/sanitize` + `POST /api/sanitize/reply`; `POST /api/folder/summarize` (reads every
+  `.md` in the folder except its own `<folder> Summary.md`, builds one prompt, calls Opus with a
+  longer `SUMMARIZE_TIMEOUT_MS`) + `POST /api/folder/summarize/reply` (resumes the session to
+  steer/revise the digest from a user instruction); `GET /api/search`; file mgmt: `GET /api/tree`, `POST /api/save`,
   `GET /api/note`, `POST /api/note/{create,rename,move,delete}`, `POST /api/folder/{create,rename,delete}`,
   `GET /api/trash`, `POST /api/trash/{restore,delete,empty}`. Holds path/trash helpers
   (`safeFileName`, `safeFolderName`, `resolveInNotes`, `readManifest`/`writeManifest`,
   `makeId`, `uniqueName`, `listMd`). `NOTES_DIR` = `<root>/notes`, `PORT` = 23456.
 - **`claude.ts`** — the ONLY module that talks to the LLM. `runClaude(opts)` spawns `claude -p`
   via `child_process.spawn`. Has an explicit "do NOT use `--bare`" comment.
-- **`prompts.ts`** — `AUTOCOMPLETE_SYSTEM`, `SANITIZE_SYSTEM` guardrail prompts + the
-  `buildAutocompletePrompt` / `buildSanitizePrompt` / `buildSanitizeReplyPrompt` builders.
+- **`prompts.ts`** — `AUTOCOMPLETE_SYSTEM`, `SANITIZE_SYSTEM`, `SUMMARIZE_SYSTEM` guardrail
+  prompts + the `buildAutocompletePrompt` / `buildSanitizePrompt` / `buildSanitizeReplyPrompt` /
+  `buildFolderSummaryPrompt` builders.
 
 ### Client (`client/src/`)
 - **`App.tsx`** — top-level state: open note `{folder, name}`, title, content, tree, modals,
@@ -99,15 +137,32 @@ build-verified, not yet click-tested in the browser.
   place + write), debounced autosave + `beforeunload` guard, debounced search, `newNote`, global
   keydown shortcuts, `handleOpen`, `handleCurrentChanged`, `handleAcceptSanitized`.
 - **`Sidebar.tsx`** — `+ Note` / `+ Folder`, collapsible folders, "Unfiled" group, per-note
-  `⋯` menu (Rename / Delete / Move to…), per-folder add+rename(✎)+delete, recycle-bin row with count.
-  Hosts drag-and-drop (note rows draggable; folders + Unfiled are drop targets) and the search
-  box + results list (controlled by `App`; results replace the tree when a query is active).
+  `⋯` menu (Rename / Delete / Move to…), per-folder summarize(✨)+add(＋)+rename(✎)+delete,
+  recycle-bin row with count. **Adding and renaming** use inline input rows (`InlineInput`
+  component; Enter saves, Esc/blur cancels), not `window.prompt`. Create = `creating` state,
+  rendered VSCode-style in tree position: `+ Note` → a row in Unfiled, `+ Folder` → a new folder
+  row atop Folders, a folder's `＋` → a row inside that (auto-expanded) folder. Rename =
+  `renaming` state; the note link / folder name becomes an `InlineInput` (prefilled + selected).
+  **Delete** uses `ConfirmDialog` (`dialog` state). Hosts drag-and-drop (note rows draggable;
+  folders + Unfiled are drop targets) and the search box + results list (controlled by `App`;
+  results replace the tree when a query is active).
 - **`Editor.tsx`** — in edit mode: textarea + suggestion bar (debounced autocomplete with
   AbortController); in rendered mode: scrollable `react-markdown`/`remark-gfm` view that switches
   to edit on click — the click maps to a source caret offset (`rehypeSourceOffset`/`data-pos` +
   `caretFromPoint` + `sourceOffsetFromClick`), applied when the textarea mounts. Takes `mode` +
   `onModeChange` props; exports `EditorMode`.
 - **`SanitizePanel.tsx`** — modal: loading / questions / preview / error phases; resume loop.
+  Preview renders the polished result as Markdown (`react-markdown` + `remark-gfm`, shared
+  `.editor-rendered` / `.modal-rendered` styling — same as `SummaryPanel`).
+- **`SummaryPanel.tsx`** — folder roll-up modal: loading / preview / error phases; Regenerate /
+  Close / Save-to-folder. Preview renders the digest as Markdown (`react-markdown` + `remark-gfm`,
+  styled via the shared `.editor-rendered` rules + a `.summary-rendered` container override). A
+  steer text box drives Regenerate: with an instruction it calls `refineSummary` (session resume)
+  to revise; empty it re-runs a fresh `summarizeFolder`. Keeps a `sessionId` (updated each
+  response) and a `reqId` ref to drop stale/post-unmount responses. `App.handleSaveSummary` writes
+  the result.
+- **`Dialog.tsx`** — `ConfirmDialog`: reusable confirm modal (Enter confirms, Esc/backdrop cancels;
+  `danger` prop → red primary button). Used for note/folder delete (Sidebar) and recycle-bin purges.
 - **`TrashPanel.tsx`** — modal: list trashed items with Restore / Delete forever / Empty bin.
 - **`api.ts`** — typed fetch helpers + `Tree` / `TrashItem` types. All paths go via `/api` proxy.
 - **`styles.css`** — minimal warm palette (cream bg, green accent); sidebar, folders, popover
@@ -154,6 +209,9 @@ make run             # foreground run (same as npm run dev)
       `saveNow()` now renames the open file in place when the title changes.
 - [ ] Browser click-test of the new features (search results, autosave indicator transitions,
       `⌘N`/`⌘S`/`⌘K` shortcuts) — build- and curl-verified, not yet exercised in the browser.
+- [ ] Browser click-test **folder summarize** (✨ → preview → steer/Regenerate → Save). The
+      endpoints are curl-verified end-to-end (real Opus run, steered refine over a session,
+      self-inclusion guard); the modal/icon and steer box aren't yet clicked in the browser.
 - [ ] No tests yet (personal v1). Add endpoint tests if it grows.
 
 ## Next steps

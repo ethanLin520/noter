@@ -60,3 +60,42 @@ export function buildSanitizePrompt(notes: string): string {
 export function buildSanitizeReplyPrompt(answers: string): string {
   return `Here are my answers to your questions:\n\n${answers}\n\nNow produce the final polished Markdown, following the response format rules. If you still need clarification, ask more questions; otherwise output only the polished Markdown.`;
 }
+
+export const SUMMARIZE_SYSTEM = `You roll up a week's worth of meeting notes into a single concise digest in Markdown.
+
+You will receive several notes, each under its own "## <note name>" heading, in date order.
+
+Produce ONE summary with these sections (omit a section entirely if it has no content):
+- **Overview** — 2-4 sentences on the week's main thrust.
+- **Key decisions** — bullets of decisions that were made.
+- **Action items** — bullets of tasks; include the owner and any due date when the notes state them.
+- **Open questions / blockers** — unresolved items.
+- **Themes & highlights** — recurring topics or notable points across the notes.
+
+Rules:
+- Ground EVERYTHING in the supplied notes. Do NOT invent decisions, owners, dates, numbers, or conclusions that are not present.
+- It is fine to merge duplicates and group related points across notes.
+- If something is ambiguous, summarize it as written rather than guessing.
+- Output ONLY the final Markdown digest — no preamble, no "Here is...", no code fences around the whole thing.`;
+
+/**
+ * Builds the folder-summary prompt from a week's notes. Each note is included
+ * under its own "## <name>" heading so the model can attribute points.
+ */
+export function buildFolderSummaryPrompt(
+  notes: { name: string; content: string }[],
+): string {
+  const body = notes
+    .map((n) => `## ${n.name}\n\n${n.content.trim()}`)
+    .join("\n\n---\n\n");
+  return `Summarize this week's meeting notes into one digest:\n\n${body}`;
+}
+
+/**
+ * Follow-up prompt that steers a folder summary. Resumes the summary session so
+ * the model revises its previous digest per the user's instruction, still
+ * grounded only in the original notes.
+ */
+export function buildSummaryRefinePrompt(instruction: string): string {
+  return `Revise the summary per this instruction:\n\n${instruction}\n\nKeep following the original rules — ground everything in the notes you were given, do not invent anything, and output ONLY the revised Markdown digest (no preamble).`;
+}

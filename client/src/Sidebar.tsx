@@ -1,4 +1,5 @@
 import { type RefObject, useState } from "react";
+import { ConfirmDialog } from "./Dialog";
 import {
   createFolder,
   createNote,
@@ -8,6 +9,7 @@ import {
   renameFolder,
   renameNote,
   type SearchResult,
+  type SortMode,
   type Tree,
 } from "./api";
 
@@ -25,7 +27,11 @@ interface SidebarProps {
   reload: () => void;
   /** Notify App that the open note moved/renamed/was deleted. */
   onCurrentChanged: (next: OpenNote | null) => void;
+  /** Open the folder-summary modal for `folder`. */
+  onSummarizeFolder: (folder: string) => void;
   flash: (msg: string) => void;
+  sortMode: SortMode;
+  onChangeSort: (next: SortMode) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   searchResults: SearchResult[];
@@ -34,6 +40,49 @@ interface SidebarProps {
 
 const stripExt = (name: string) => name.replace(/\.md$/i, "");
 
+// Click the sort button to cycle through these in order.
+const SORT_CYCLE: SortMode[] = ["created-desc", "created-asc", "name"];
+const SORT_META: Record<SortMode, { label: string; icon: string }> = {
+  "created-desc": { label: "Newest first", icon: "↓" },
+  "created-asc": { label: "Oldest first", icon: "↑" },
+  name: { label: "Name (A–Z)", icon: "A" },
+};
+
+/** Inline text row for creating/renaming a note/folder in place. Enter submits, Esc/blur cancels. */
+function InlineInput({
+  placeholder,
+  initial = "",
+  onSubmit,
+  onCancel,
+}: {
+  placeholder?: string;
+  initial?: string;
+  onSubmit: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  return (
+    <input
+      className="inline-input"
+      autoFocus
+      placeholder={placeholder}
+      value={value}
+      onFocus={(e) => e.currentTarget.select()}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onSubmit(value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      onBlur={() => onCancel()}
+    />
+  );
+}
+
 export default function Sidebar({
   tree,
   current,
@@ -41,7 +90,10 @@ export default function Sidebar({
   onOpenTrash,
   reload,
   onCurrentChanged,
+  onSummarizeFolder,
   flash,
+  sortMode,
+  onChangeSort,
   searchQuery,
   onSearchChange,
   searchResults,
@@ -53,6 +105,18 @@ export default function Sidebar({
   const [menuKey, setMenuKey] = useState<string | null>(null);
   // Drop target currently hovered during a drag ("" = Unfiled, folder name, or null).
   const [dragOver, setDragOver] = useState<string | null>(null);
+  // In-progress inline creation. null = nothing; folder "" = top-level.
+  const [creating, setCreating] = useState<
+    { kind: "note" | "folder"; folder: string } | null
+  >(null);
+  // In-progress inline rename. null = nothing. For a note, folder is its parent.
+  const [renaming, setRenaming] = useState<
+    { kind: "note"; folder: string; name: string } | { kind: "folder"; name: string } | null
+  >(null);
+  // Active confirm dialog (delete), or null when none is open.
+  const [dialog, setDialog] = useState<
+    { title: string; message: string; onConfirm: () => void } | null
+  >(null);
 
   const folderNames = tree.folders.map((f) => f.name);
 
@@ -72,40 +136,51 @@ export default function Sidebar({
     }
   };
 
-  const handleNewNote = (folder: string) =>
+  // Open an inline input. For a note in a folder, force that folder expanded.
+  const handleNewNote = (folder: string) => {
+    if (folder) setCollapsed((c) => ({ ...c, [folder]: false }));
+    setCreating({ kind: "note", folder });
+  };
+
+  const handleNewFolder = () => setCreating({ kind: "folder", folder: "" });
+
+  const submitNote = (folder: string, raw: string) => {
+    setCreating(null);
+    // Top-level new notes are filed as unfiled; an explicit
+    // "+ Note in folder" keeps the folder the user chose.
     wrap(async () => {
-      const raw = window.prompt(
-        folder ? `New note in "${folder}"` : "New note name",
-        "untitled",
-      );
-      if (raw == null) return;
       const { folder: f, name } = await createNote(folder, raw.trim() || "untitled");
       reload();
       onOpen(f, name);
     }, "Create failed");
+  };
 
-  const handleNewFolder = () =>
+  const submitFolder = (raw: string) => {
+    setCreating(null);
+    const trimmed = raw.trim();
+    if (!trimmed) return;
     wrap(async () => {
-      const raw = window.prompt("New folder name");
-      if (raw == null) return;
-      const trimmed = raw.trim();
-      if (!trimmed) return;
       await createFolder(trimmed);
       reload();
     }, "Create folder failed");
+  };
 
-  const handleRename = (folder: string, name: string) =>
+  const handleRename = (folder: string, name: string) => {
+    closeMenu();
+    setRenaming({ kind: "note", folder, name });
+  };
+
+  const submitRenameNote = (folder: string, name: string, raw: string) => {
+    setRenaming(null);
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === stripExt(name)) return;
     wrap(async () => {
-      closeMenu();
-      const raw = window.prompt("Rename note", stripExt(name));
-      if (raw == null) return;
-      const trimmed = raw.trim();
-      if (!trimmed || trimmed === stripExt(name)) return;
       const { name: newName } = await renameNote(folder, name, trimmed);
       reload();
       if (isOpen(folder, name)) onCurrentChanged({ folder, name: newName });
       flash(`Renamed to ${stripExt(newName)}`);
     }, "Rename failed");
+  };
 
   const handleMove = (folder: string, name: string, toFolder: string) =>
     wrap(async () => {
@@ -116,15 +191,22 @@ export default function Sidebar({
       flash(toFolder ? `Moved to ${toFolder}` : "Moved to Unfiled");
     }, "Move failed");
 
-  const handleDelete = (folder: string, name: string) =>
-    wrap(async () => {
-      closeMenu();
-      if (!window.confirm(`Move "${stripExt(name)}" to the recycle bin?`)) return;
-      await deleteNote(folder, name);
-      reload();
-      if (isOpen(folder, name)) onCurrentChanged(null);
-      flash("Moved to recycle bin");
-    }, "Delete failed");
+  const handleDelete = (folder: string, name: string) => {
+    closeMenu();
+    setDialog({
+      title: "Delete note",
+      message: `Move "${stripExt(name)}" to the recycle bin?`,
+      onConfirm: () => {
+        setDialog(null);
+        wrap(async () => {
+          await deleteNote(folder, name);
+          reload();
+          if (isOpen(folder, name)) onCurrentChanged(null);
+          flash("Moved to recycle bin");
+        }, "Delete failed");
+      },
+    });
+  };
 
   // --- Drag and drop: move a note onto a folder (or Unfiled) ---------------
   const DRAG_MIME = "application/x-noter";
@@ -159,34 +241,59 @@ export default function Sidebar({
     },
   });
 
-  const handleRenameFolder = (name: string) =>
+  const handleRenameFolder = (name: string) => {
+    closeMenu();
+    setRenaming({ kind: "folder", name });
+  };
+
+  const submitRenameFolder = (name: string, raw: string) => {
+    setRenaming(null);
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === name) return;
     wrap(async () => {
-      const raw = window.prompt("Rename folder", name);
-      if (raw == null) return;
-      const trimmed = raw.trim();
-      if (!trimmed || trimmed === name) return;
       const { name: newName } = await renameFolder(name, trimmed);
       reload();
       if (current?.folder === name) onCurrentChanged({ folder: newName, name: current.name });
       flash(`Renamed folder to ${newName}`);
     }, "Rename folder failed");
+  };
 
-  const handleDeleteFolder = (name: string, noteCount: number) =>
-    wrap(async () => {
-      const msg =
+  const handleDeleteFolder = (name: string, noteCount: number) => {
+    closeMenu();
+    setDialog({
+      title: "Delete folder",
+      message:
         noteCount > 0
           ? `Delete folder "${name}"? Its ${noteCount} note(s) will go to the recycle bin.`
-          : `Delete empty folder "${name}"?`;
-      if (!window.confirm(msg)) return;
-      await deleteFolder(name);
-      reload();
-      if (current?.folder === name) onCurrentChanged(null);
-      flash(`Deleted folder ${name}`);
-    }, "Delete folder failed");
+          : `Delete empty folder "${name}"?`,
+      onConfirm: () => {
+        setDialog(null);
+        wrap(async () => {
+          await deleteFolder(name);
+          reload();
+          if (current?.folder === name) onCurrentChanged(null);
+          flash(`Deleted folder ${name}`);
+        }, "Delete folder failed");
+      },
+    });
+  };
 
   const renderNote = (folder: string, name: string) => {
     const key = `${folder}/${name}`;
     const moveTargets = ["", ...folderNames].filter((f) => f !== folder);
+    const isRenaming =
+      renaming?.kind === "note" && renaming.folder === folder && renaming.name === name;
+    if (isRenaming) {
+      return (
+        <li key={key} className="note-row">
+          <InlineInput
+            initial={stripExt(name)}
+            onSubmit={(v) => submitRenameNote(folder, name, v)}
+            onCancel={() => setRenaming(null)}
+          />
+        </li>
+      );
+    }
     return (
       <li
         key={key}
@@ -243,6 +350,17 @@ export default function Sidebar({
         <button className="btn-secondary small" onClick={handleNewFolder}>
           + Folder
         </button>
+        <button
+          className="btn-secondary small sort-btn"
+          title={`Sort: ${SORT_META[sortMode].label} (click to change)`}
+          onClick={() =>
+            onChangeSort(
+              SORT_CYCLE[(SORT_CYCLE.indexOf(sortMode) + 1) % SORT_CYCLE.length],
+            )
+          }
+        >
+          {SORT_META[sortMode].icon}
+        </button>
       </div>
 
       <div className="search-box">
@@ -252,7 +370,7 @@ export default function Sidebar({
           type="search"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search notes…  (⌘K)"
+          placeholder="Search notes (⌘K)"
           aria-label="Search notes"
         />
         {searchQuery && (
@@ -284,18 +402,54 @@ export default function Sidebar({
       ) : (
         <>
       {/* Folders */}
+      {creating?.kind === "folder" && (
+        <div className="folder">
+          <div className="folder-row">
+            <div className="folder-toggle">
+              <span className="caret">▾</span>
+              <InlineInput
+                placeholder="Folder name"
+                onSubmit={(v) => submitFolder(v)}
+                onCancel={() => setCreating(null)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
       {tree.folders.map((f) => (
         <div key={f.name} className="folder">
           <div
             className={`folder-row${dragOver === f.name ? " drag-over" : ""}`}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenuKey(`folder:${f.name}`);
+            }}
             {...dropProps(f.name)}
           >
-            <button className="folder-toggle" onClick={() => toggle(f.name)}>
-              <span className="caret">{collapsed[f.name] ? "▸" : "▾"}</span>
-              <span className="folder-name" title={f.name}>
-                {f.name}
-              </span>
-              <span className="muted small">{f.notes.length}</span>
+            {renaming?.kind === "folder" && renaming.name === f.name ? (
+              <div className="folder-toggle">
+                <span className="caret">{collapsed[f.name] ? "▸" : "▾"}</span>
+                <InlineInput
+                  initial={f.name}
+                  onSubmit={(v) => submitRenameFolder(f.name, v)}
+                  onCancel={() => setRenaming(null)}
+                />
+              </div>
+            ) : (
+              <button className="folder-toggle" onClick={() => toggle(f.name)}>
+                <span className="caret">{collapsed[f.name] ? "▸" : "▾"}</span>
+                <span className="folder-name" title={f.name}>
+                  {f.name}
+                </span>
+                <span className="muted small">{f.notes.length}</span>
+              </button>
+            )}
+            <button
+              className="icon-btn"
+              title="Summarize folder"
+              onClick={() => onSummarizeFolder(f.name)}
+            >
+              ✨
             </button>
             <button
               className="icon-btn"
@@ -304,24 +458,56 @@ export default function Sidebar({
             >
               ＋
             </button>
-            <button
-              className="icon-btn"
-              title="Rename folder"
-              onClick={() => handleRenameFolder(f.name)}
-            >
-              ✎
-            </button>
-            <button
-              className="icon-btn"
-              title="Delete folder"
-              onClick={() => handleDeleteFolder(f.name, f.notes.length)}
-            >
-              🗑
-            </button>
+            {menuKey === `folder:${f.name}` && (
+              <div className="popover" onMouseLeave={closeMenu}>
+                <button
+                  className="popover-item"
+                  onClick={() => {
+                    closeMenu();
+                    onSummarizeFolder(f.name);
+                  }}
+                >
+                  Summarize
+                </button>
+                <button
+                  className="popover-item"
+                  onClick={() => {
+                    closeMenu();
+                    handleNewNote(f.name);
+                  }}
+                >
+                  New note
+                </button>
+                <button
+                  className="popover-item"
+                  onClick={() => handleRenameFolder(f.name)}
+                >
+                  Rename
+                </button>
+                <button
+                  className="popover-item"
+                  onClick={() => handleDeleteFolder(f.name, f.notes.length)}
+                >
+                  Delete
+                </button>
+              </div>
+            )}
           </div>
           {!collapsed[f.name] && (
             <ul className="note-list indent">
-              {f.notes.length === 0 && <li className="muted small empty">empty</li>}
+              {creating?.kind === "note" && creating.folder === f.name && (
+                <li>
+                  <InlineInput
+                    placeholder="Note name"
+                    onSubmit={(v) => submitNote(f.name, v)}
+                    onCancel={() => setCreating(null)}
+                  />
+                </li>
+              )}
+              {f.notes.length === 0 &&
+                !(creating?.kind === "note" && creating.folder === f.name) && (
+                  <li className="muted small empty">empty</li>
+                )}
               {f.notes.map((n) => renderNote(f.name, n))}
             </ul>
           )}
@@ -332,9 +518,19 @@ export default function Sidebar({
       <div className={`unfiled${dragOver === "" ? " drag-over" : ""}`} {...dropProps("")}>
         <p className="sidebar-label">Unfiled</p>
         <ul className="note-list">
-          {tree.unfiled.length === 0 && (
-            <li className="muted small empty">No unfiled notes</li>
+          {creating?.kind === "note" && creating.folder === "" && (
+            <li>
+              <InlineInput
+                placeholder="Note name"
+                onSubmit={(v) => submitNote("", v)}
+                onCancel={() => setCreating(null)}
+              />
+            </li>
           )}
+          {tree.unfiled.length === 0 &&
+            !(creating?.kind === "note" && creating.folder === "") && (
+              <li className="muted small empty">No unfiled notes</li>
+            )}
           {tree.unfiled.map((n) => renderNote("", n))}
         </ul>
       </div>
@@ -346,6 +542,17 @@ export default function Sidebar({
         🗑 Recycle bin
         {tree.trashCount > 0 && <span className="badge">{tree.trashCount}</span>}
       </button>
+
+      {dialog && (
+        <ConfirmDialog
+          title={dialog.title}
+          message={dialog.message}
+          confirmLabel="Delete"
+          danger
+          onConfirm={dialog.onConfirm}
+          onCancel={() => setDialog(null)}
+        />
+      )}
     </aside>
   );
 }

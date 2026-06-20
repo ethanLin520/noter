@@ -29,7 +29,11 @@ body {
 .app {
   display: grid;
   grid-template-columns: 220px 1fr;
+  /* minmax(0, …) lets the row stay viewport-height instead of growing to fit a
+     tall sidebar list, so the sidebar and main pane each scroll on their own. */
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
+  overflow: hidden;
   position: relative;
 }
 
@@ -128,6 +132,37 @@ body {
 
 .sidebar-actions .btn-secondary {
   flex: 1;
+}
+
+.sidebar-actions .sort-btn {
+  flex: 0 0 auto;
+  min-width: 30px;
+  padding-left: 8px;
+  padding-right: 8px;
+  font-weight: 600;
+}
+
+/* Inline name input for creating a note/folder in place. */
+.inline-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+}
+
+.inline-input:focus {
+  border-color: var(--accent);
+}
+
+/* When nested in a folder's note-list, drop the bottom margin so rows stay tight. */
+.note-list .inline-input {
+  margin-bottom: 2px;
 }
 
 /* --- Sidebar: search --- */
@@ -250,7 +285,7 @@ body {
 }
 
 .note-list.indent {
-  padding-left: 14px;
+  padding-left: 4px;
 }
 
 .empty {
@@ -263,6 +298,7 @@ body {
 }
 
 .folder-row {
+  position: relative;
   display: flex;
   align-items: center;
 }
@@ -440,6 +476,7 @@ body {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .toolbar {
@@ -622,6 +659,21 @@ body {
   background: var(--panel);
 }
 
+/* Rendered-Markdown preview inside a modal (summary, sanitize): reuse all the
+   .editor-rendered element styles, but override the container so it fits the
+   modal (boxed + scrollable, not a flex pane, not click-to-edit). */
+.modal-rendered {
+  flex: none;
+  cursor: default;
+  padding: 14px;
+  font-size: 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
 .suggestion-bar {
   min-height: 44px;
   border-top: 1px solid var(--line);
@@ -701,6 +753,17 @@ body {
   cursor: not-allowed;
 }
 
+.btn-primary.danger {
+  background: #b3261e;
+  color: #fff;
+  border-color: #b3261e;
+}
+
+.btn-primary.danger:hover {
+  background: #9c211a;
+  border-color: #9c211a;
+}
+
 .btn-secondary {
   background: var(--panel);
   color: var(--ink);
@@ -734,6 +797,10 @@ body {
   flex-direction: column;
   overflow: hidden;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+
+.modal.dialog {
+  width: min(420px, 100%);
 }
 
 .modal-header {
@@ -791,18 +858,18 @@ body {
   border-color: var(--accent);
 }
 
-.preview {
-  background: var(--bg);
+.summary-steer {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 14px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  max-height: 50vh;
-  overflow-y: auto;
+  border-radius: 7px;
+  font-size: 14px;
+  outline: none;
+}
+
+.summary-steer:focus {
+  border-color: var(--accent);
 }
 
 .error {

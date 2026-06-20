@@ -41,6 +41,27 @@ export function sanitizeReply(sessionId: string, answers: string): Promise<Sanit
   return postJson<SanitizeResponse>("/api/sanitize/reply", { sessionId, answers });
 }
 
+export interface FolderSummaryResponse {
+  result: string;
+  sessionId: string;
+}
+
+/** Roll up every note in a folder (skipping its own summary) into one digest. */
+export function summarizeFolder(folder: string): Promise<FolderSummaryResponse> {
+  return postJson<FolderSummaryResponse>("/api/folder/summarize", { folder });
+}
+
+/** Steer a prior folder summary (resumes its session) with an instruction. */
+export function refineSummary(
+  sessionId: string,
+  instruction: string,
+): Promise<FolderSummaryResponse> {
+  return postJson<FolderSummaryResponse>("/api/folder/summarize/reply", {
+    sessionId,
+    instruction,
+  });
+}
+
 // --- Search -----------------------------------------------------------------
 
 export interface SearchResult {
@@ -71,8 +92,10 @@ export interface TrashItem {
   deletedAt: string;
 }
 
-export async function getTree(): Promise<Tree> {
-  const res = await fetch("/api/tree");
+export type SortMode = "created-desc" | "created-asc" | "name";
+
+export async function getTree(sort: SortMode = "created-desc"): Promise<Tree> {
+  const res = await fetch(`/api/tree?sort=${sort}`);
   if (!res.ok) throw new Error("failed to load notes");
   return (await res.json()) as Tree;
 }

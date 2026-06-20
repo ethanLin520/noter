@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ConfirmDialog } from "./Dialog";
 import { emptyTrash, getTrash, purgeTrash, restoreTrash, type TrashItem } from "./api";
 
 interface TrashPanelProps {
@@ -26,6 +27,8 @@ export default function TrashPanel({ onChanged, onClose }: TrashPanelProps) {
   const [items, setItems] = useState<TrashItem[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  // Active purge confirmation: "all" for empty-bin, or a single item.
+  const [confirm, setConfirm] = useState<"all" | TrashItem | null>(null);
 
   const refresh = useCallback(() => {
     setLoading(true);
@@ -54,14 +57,7 @@ export default function TrashPanel({ onChanged, onClose }: TrashPanelProps) {
           <h2>Recycle bin</h2>
           <div className="toolbar-actions">
             {items.length > 0 && (
-              <button
-                className="btn-secondary small"
-                onClick={() => {
-                  if (window.confirm("Permanently delete all items in the recycle bin?")) {
-                    run(() => emptyTrash());
-                  }
-                }}
-              >
+              <button className="btn-secondary small" onClick={() => setConfirm("all")}>
                 Empty bin
               </button>
             )}
@@ -91,11 +87,7 @@ export default function TrashPanel({ onChanged, onClose }: TrashPanelProps) {
                   </button>
                   <button
                     className="btn-secondary small danger"
-                    onClick={() => {
-                      if (window.confirm(`Permanently delete "${stripExt(it.originalName)}"?`)) {
-                        run(() => purgeTrash(it.id));
-                      }
-                    }}
+                    onClick={() => setConfirm(it)}
                   >
                     Delete forever
                   </button>
@@ -105,6 +97,25 @@ export default function TrashPanel({ onChanged, onClose }: TrashPanelProps) {
           </ul>
         </div>
       </div>
+
+      {confirm && (
+        <ConfirmDialog
+          title={confirm === "all" ? "Empty recycle bin" : "Delete forever"}
+          message={
+            confirm === "all"
+              ? "Permanently delete all items in the recycle bin? This cannot be undone."
+              : `Permanently delete "${stripExt(confirm.originalName)}"? This cannot be undone.`
+          }
+          confirmLabel="Delete forever"
+          danger
+          onConfirm={() => {
+            const target = confirm;
+            setConfirm(null);
+            run(() => (target === "all" ? emptyTrash() : purgeTrash(target.id)));
+          }}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
     </div>
   );
 }
