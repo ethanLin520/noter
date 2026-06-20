@@ -110,12 +110,18 @@ export function saveNote(
   return postJson("/api/save", { folder, name, markdown, createNew });
 }
 
-export async function loadNote(folder: string, name: string): Promise<string> {
+export interface LoadedNote {
+  markdown: string;
+  /** ISO timestamp of the file's last modification. */
+  mtime: string;
+}
+
+export async function loadNote(folder: string, name: string): Promise<LoadedNote> {
   const params = new URLSearchParams({ folder, name });
   const res = await fetch(`/api/note?${params.toString()}`);
   if (!res.ok) throw new Error("failed to load note");
-  const data = (await res.json()) as { markdown: string };
-  return data.markdown;
+  const data = (await res.json()) as { markdown: string; mtime: string };
+  return { markdown: data.markdown, mtime: data.mtime };
 }
 
 export function createNote(

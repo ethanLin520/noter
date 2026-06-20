@@ -4,7 +4,7 @@ Local, personal note-taking app for work meetings. Type fast/shorthand notes, ge
 real-time autocomplete corrections and a post-meeting "sanitize" polish. Notes are saved
 as `.md` files on disk. Local-only, single-user, no auth, no deploy.
 
-_Last updated: 2026-06-20 — replaced native `window.prompt`/`window.confirm` for rename/delete: **rename is now inline** in the sidebar (`InlineInput` gained an `initial` prop + select-on-focus; `renaming` state in `Sidebar.tsx`), and **delete uses a `ConfirmDialog` modal** (new `client/src/Dialog.tsx`, red Delete button) — also backing the recycle bin's Delete-forever/Empty-bin. Added **note sorting** (default newest-created first; sidebar button cycles Newest/Oldest/Name; `GET /api/tree?sort=`, persisted in `localStorage`) and fixed sidebar/main to **scroll independently** (`.app` grid row `minmax(0,1fr)` + `overflow:hidden`). Also made create **VSCode-style inline in tree position** (new-note row in Unfiled, new-folder row atop Folders). Post-review fixes: the per-folder summary filename (`<folder> Summary.md`) is now **reserved** — `POST /api/note/{create,rename}` return 409 for it (via `summaryFileName()`), so the summary's overwrite-on-rerun save can never clobber a hand-authored note; and inline create now clears its row up front so a failed create surfaces the error consistently (matching inline rename). Earlier this session: new top-level notes land in **Unfiled** instead of an auto-created weekly folder (removed `client/src/week.ts`); folder summarize via `POST /api/folder/summarize` + `SummaryPanel.tsx`._
+_Last updated: 2026-06-20 — added an **app logo** (`client/public/noter-icon.svg`, an inline-SVG note + blinking green caret) wired as the favicon (`client/index.html`) and shown beside the sidebar title (`.logo`/`.logo-icon`); a **last-edited timestamp** under the note title in the toolbar header (`GET /api/note` now returns the file `mtime`, threaded through `loadNote()` → `LoadedNote`, stored as `lastEdited` in `App.tsx`, refreshed on every save, formatted via `formatEdited()` in the viewer's local timezone); and **Esc in edit mode returns to preview** (`Editor.tsx` — first Esc still dismisses an active/loading autocomplete suggestion). Earlier this session — replaced native `window.prompt`/`window.confirm` for rename/delete: **rename is now inline** in the sidebar (`InlineInput` gained an `initial` prop + select-on-focus; `renaming` state in `Sidebar.tsx`), and **delete uses a `ConfirmDialog` modal** (new `client/src/Dialog.tsx`, red Delete button) — also backing the recycle bin's Delete-forever/Empty-bin. Added **note sorting** (default newest-created first; sidebar button cycles Newest/Oldest/Name; `GET /api/tree?sort=`, persisted in `localStorage`) and fixed sidebar/main to **scroll independently** (`.app` grid row `minmax(0,1fr)` + `overflow:hidden`). Also made create **VSCode-style inline in tree position** (new-note row in Unfiled, new-folder row atop Folders). Post-review fixes: the per-folder summary filename (`<folder> Summary.md`) is now **reserved** — `POST /api/note/{create,rename}` return 409 for it (via `summaryFileName()`), so the summary's overwrite-on-rerun save can never clobber a hand-authored note; and inline create now clears its row up front so a failed create surfaces the error consistently (matching inline rename). Earlier this session: new top-level notes land in **Unfiled** instead of an auto-created weekly folder (removed `client/src/week.ts`); folder summarize via `POST /api/folder/summarize` + `SummaryPanel.tsx`._
 
 ---
 
@@ -20,7 +20,8 @@ Working and verified end-to-end:
   in rendered mode and auto-switch to rendered after a sanitize; new blank notes start in edit
   mode. Clicking the rendered view drops into edit mode with the caret at the clicked spot (a
   `rehypeSourceOffset` plugin stamps `data-pos` offsets; the click maps back via `caretFromPoint`
-  + a block-anchored text search).
+  + a block-anchored text search). In edit mode, **Esc returns to rendered/preview** (a first
+  Esc dismisses an active autocomplete suggestion before exiting to preview).
 - **Post-meeting sanitize** — stronger model polishes the whole note into Markdown without
   changing meaning; asks clarifying questions via a `QUESTIONS:` block (multi-turn resume loop)
   rather than guessing.
@@ -64,6 +65,10 @@ Working and verified end-to-end:
   `beforeunload` warns on unsaved work. Single `saveNow()` in `App.tsx` is the only save path.
 - **In-place rename** — editing the title and saving now **renames** the open file (via
   `/api/note/rename`) instead of creating a duplicate. Resolves the old title-vs-rename foot-gun.
+- **Last-edited timestamp** — the toolbar shows "Edited <date, time>" under the note title,
+  in the viewer's local timezone (`GET /api/note` returns the file `mtime`; refreshed on save).
+- **Branding** — inline-SVG app logo (note page + blinking green caret) as the browser favicon
+  and beside the "Noter" sidebar title (`client/public/noter-icon.svg`).
 - **Keyboard shortcuts** — `⌘S` save, `⌘N` new (blank, unsaved) note, `⌘K`/`⌘F` focus search.
 - **Persistence** — notes saved under `notes/` as `.md`; folders are subdirectories; trash is
   a hidden `notes/.trash/` + `trash.json` manifest.
@@ -196,6 +201,22 @@ make run-bg          # start both in background; logs -> dev.log
 make logs            # tail -f dev.log
 make kill            # stop whatever's on :12345 / :23456
 make run             # foreground run (same as npm run dev)
+```
+
+---
+
+## Commit style
+
+Release-style messages. **First line is the version only** (`Release vX.Y.Z`); leave a blank
+line, then a short bullet list of what shipped — concise and meaningful, one bullet per
+user-facing change. Example:
+
+```
+Release v1.1.2
+
+- App logo (favicon + sidebar)
+- Last-edited timestamp in header
+- Esc returns to preview
 ```
 
 ---

@@ -187,11 +187,16 @@ export default function Editor({ value, onChange, mode, onModeChange }: EditorPr
         return;
       }
       if (e.key === "Escape") {
-        cancelPending();
-        setSuggestion(null);
+        // First Esc dismisses an active/loading suggestion; with none, return to preview.
+        if (suggestion || loading) {
+          cancelPending();
+          setSuggestion(null);
+        } else {
+          onModeChange("rendered");
+        }
       }
     },
-    [suggestion, acceptSuggestion, cancelPending],
+    [suggestion, loading, acceptSuggestion, cancelPending, onModeChange],
   );
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {

@@ -30,6 +30,19 @@ function defaultTitle(): string {
 
 const stripExt = (name: string) => name.replace(/\.md$/i, "");
 
+/** "Jun 20, 2026, 11:08 AM" — absolute last-edited stamp for the header. */
+function formatEdited(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 const EMPTY_TREE: Tree = { unfiled: [], folders: [], trashCount: 0 };
 
 const SAVE_LABEL: Record<SaveState, string> = {
@@ -63,6 +76,8 @@ export default function App() {
   const [title, setTitle] = useState(defaultTitle());
   const [notes, setNotes] = useState("");
   const [current, setCurrent] = useState<OpenNote | null>(null);
+  // ISO timestamp of the open note's last save; null for an unsaved new note.
+  const [lastEdited, setLastEdited] = useState<string | null>(null);
   const [tree, setTree] = useState<Tree>(EMPTY_TREE);
   const [sortMode, setSortMode] = useState<SortMode>(initialSortMode);
   const [showSanitize, setShowSanitize] = useState(false);
@@ -156,6 +171,7 @@ export default function App() {
         if (stripExt(name) !== desired) setTitle(stripExt(name));
       }
       setSaveState("saved");
+      setLastEdited(new Date().toISOString());
       refreshTree();
     } catch (e) {
       setSaveState("error");
@@ -201,6 +217,7 @@ export default function App() {
     setNotes("");
     setSaveState("idle");
     setMode("edit");
+    setLastEdited(null);
   }, []);
 
   // Global keyboard shortcuts: ⌘S save, ⌘N new, ⌘K/⌘F focus search.
@@ -252,10 +269,11 @@ export default function App() {
   const handleOpen = useCallback(
     async (folder: string, name: string) => {
       try {
-        const md = await loadNote(folder, name);
+        const { markdown: md, mtime } = await loadNote(folder, name);
         setNotes(md);
         setTitle(stripExt(name));
         setCurrent({ folder, name });
+        setLastEdited(mtime);
         setSaveState("idle"); // freshly loaded — not dirty
         setMode("rendered"); // notes are usually read before edited
         flash(`Opened ${stripExt(name)}`);
@@ -276,6 +294,7 @@ export default function App() {
       setTitle(defaultTitle());
       setNotes("");
       setMode("edit");
+      setLastEdited(null);
     }
   }, []);
 
@@ -299,6 +318,7 @@ export default function App() {
           if (stripExt(name) !== title.trim()) setTitle(stripExt(name));
         }
         setSaveState("saved");
+        setLastEdited(new Date().toISOString());
         flash(`Sanitized & saved ${stripExt(name)}`);
         refreshTree();
       } catch (e) {
@@ -357,16 +377,21 @@ export default function App() {
 
       <main className="main">
         <header className="toolbar">
-          <input
-            className="title-input"
-            value={title}
-            onChange={(e) => {
-              setTitle(e.target.value);
-              setSaveState("dirty");
-            }}
-            placeholder="note title"
-            aria-label="Note title"
-          />
+          <div className="title-block">
+            <input
+              className="title-input"
+              value={title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                setSaveState("dirty");
+              }}
+              placeholder="note title"
+              aria-label="Note title"
+            />
+            {lastEdited && (
+              <span className="title-edited">Edited {formatEdited(lastEdited)}</span>
+            )}
+          </div>
           <div className="toolbar-actions">
             <span className="status">{status}</span>
             <span className={`save-indicator ${saveState}`}>{SAVE_LABEL[saveState]}</span>

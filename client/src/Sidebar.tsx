@@ -341,7 +341,10 @@ export default function Sidebar({
 
   return (
     <aside className="sidebar">
-      <h1 className="logo">Noter</h1>
+      <h1 className="logo">
+        <img className="logo-icon" src="/noter-icon.svg" alt="" aria-hidden="true" />
+        Noter
+      </h1>
 
       <div className="sidebar-actions">
         <button className="btn-secondary small" onClick={() => handleNewNote("")}>

@@ -429,8 +429,12 @@ app.get(
     const folderName = req.query.folder ? safeFolderName(String(req.query.folder)) : "";
     const fileName = safeFileName(String(req.query.name ?? ""));
     try {
-      const markdown = await fs.readFile(resolveInNotes(folderName, fileName), "utf8");
-      res.json({ folder: folderName, name: fileName, markdown });
+      const fullPath = resolveInNotes(folderName, fileName);
+      const [markdown, stat] = await Promise.all([
+        fs.readFile(fullPath, "utf8"),
+        fs.stat(fullPath),
+      ]);
+      res.json({ folder: folderName, name: fileName, markdown, mtime: stat.mtime.toISOString() });
     } catch {
       res.status(404).json({ error: "note not found" });
     }
