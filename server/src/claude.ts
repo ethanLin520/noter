@@ -25,6 +25,14 @@ export interface RunClaudeOptions {
   sessionId?: string;
   /** Hard timeout in ms before the subprocess is killed. */
   timeoutMs?: number;
+  /**
+   * Disable extended thinking (sets MAX_THINKING_TOKENS=0 in the child env).
+   * Used for autocomplete: the model was emitting ~130 hidden thinking tokens
+   * per keystroke-pause for a ~5-token answer, which dominated latency. Turning
+   * it off cut per-call API time from ~1.5-4s down to ~0.9s with identical
+   * results. Leave off for sanitize/summarize, which benefit from reasoning.
+   */
+  disableThinking?: boolean;
 }
 
 export interface RunClaudeResult {
@@ -54,6 +62,7 @@ export function runClaude(opts: RunClaudeOptions): Promise<RunClaudeResult> {
     appendSystemPrompt,
     sessionId,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    disableThinking = false,
   } = opts;
 
   const args = ["-p", prompt, "--model", model, "--tools", "", "--output-format", "json"];
@@ -64,8 +73,12 @@ export function runClaude(opts: RunClaudeOptions): Promise<RunClaudeResult> {
     args.push("--resume", sessionId);
   }
 
+  const env = disableThinking
+    ? { ...process.env, MAX_THINKING_TOKENS: "0" }
+    : process.env;
+
   return new Promise<RunClaudeResult>((resolve, reject) => {
-    const child = spawn("claude", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("claude", args, { stdio: ["ignore", "pipe", "pipe"], env });
 
     let stdout = "";
     let stderr = "";

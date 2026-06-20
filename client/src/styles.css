@@ -562,6 +562,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  position: relative;
 }
 
 .editor-textarea {
@@ -696,19 +697,70 @@ body {
   overflow-y: auto;
 }
 
-.suggestion-bar {
-  min-height: 44px;
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-  padding: 6px 22px;
-  display: flex;
-  align-items: center;
+/* Floating suggestion card, anchored just under (or above) the caret's line. */
+.suggestion-pop {
+  position: absolute;
+  z-index: 5;
+  max-width: min(90%, 520px);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  animation: suggestion-in 90ms ease-out;
+}
+
+/* When flipped above the line, pin the card's bottom to the given top. */
+.suggestion-pop.is-above {
+  transform: translateY(-100%);
+}
+
+@keyframes suggestion-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.suggestion-pop.is-above {
+  animation: suggestion-in-above 90ms ease-out;
+}
+@keyframes suggestion-in-above {
+  from { opacity: 0; transform: translateY(calc(-100% + 2px)); }
+  to { opacity: 1; transform: translateY(-100%); }
 }
 
 .suggestion-loading {
+  display: inline-block;
   color: var(--muted);
   font-size: 13px;
   font-style: italic;
+  padding: 4px 8px;
+}
+
+/* Transient post-accept undo/redo hint — muted, lighter than the suggestion card. */
+.suggestion-pop.suggestion-undo {
+  border-color: var(--line);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
+}
+
+.suggestion-undo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.suggestion-undo-btn:hover {
+  background: #f3f7f4;
+  color: var(--ink);
+}
+
+.suggestion-undo-btn .suggestion-arrow {
+  font-size: 13px;
 }
 
 .suggestion {
@@ -717,15 +769,14 @@ body {
   gap: 10px;
   max-width: 100%;
   background: none;
-  border: 1px dashed var(--line);
-  border-radius: 8px;
-  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 8px;
   cursor: pointer;
   text-align: left;
 }
 
 .suggestion:hover {
-  border-color: var(--accent);
   background: #f3f7f4;
 }
 
@@ -737,9 +788,7 @@ body {
 .suggestion-text {
   color: var(--ghost);
   font-size: 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .suggestion:hover .suggestion-text {

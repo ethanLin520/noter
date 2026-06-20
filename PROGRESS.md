@@ -4,7 +4,7 @@ Local, personal note-taking app for work meetings. Type fast/shorthand notes, ge
 real-time autocomplete corrections and a post-meeting "sanitize" polish. Notes are saved
 as `.md` files on disk. Local-only, single-user, no auth, no deploy.
 
-_Last updated: 2026-06-20 — added an **app logo** (`client/public/noter-icon.svg`, an inline-SVG note + blinking green caret) wired as the favicon (`client/index.html`) and shown beside the sidebar title (`.logo`/`.logo-icon`); a **last-edited timestamp** under the note title in the toolbar header (`GET /api/note` now returns the file `mtime`, threaded through `loadNote()` → `LoadedNote`, stored as `lastEdited` in `App.tsx`, refreshed on every save, formatted via `formatEdited()` in the viewer's local timezone); and **Esc in edit mode returns to preview** (`Editor.tsx` — first Esc still dismisses an active/loading autocomplete suggestion). Earlier this session — replaced native `window.prompt`/`window.confirm` for rename/delete: **rename is now inline** in the sidebar (`InlineInput` gained an `initial` prop + select-on-focus; `renaming` state in `Sidebar.tsx`), and **delete uses a `ConfirmDialog` modal** (new `client/src/Dialog.tsx`, red Delete button) — also backing the recycle bin's Delete-forever/Empty-bin. Added **note sorting** (default newest-created first; sidebar button cycles Newest/Oldest/Name; `GET /api/tree?sort=`, persisted in `localStorage`) and fixed sidebar/main to **scroll independently** (`.app` grid row `minmax(0,1fr)` + `overflow:hidden`). Also made create **VSCode-style inline in tree position** (new-note row in Unfiled, new-folder row atop Folders). Post-review fixes: the per-folder summary filename (`<folder> Summary.md`) is now **reserved** — `POST /api/note/{create,rename}` return 409 for it (via `summaryFileName()`), so the summary's overwrite-on-rerun save can never clobber a hand-authored note; and inline create now clears its row up front so a failed create surfaces the error consistently (matching inline rename). Earlier this session: new top-level notes land in **Unfiled** instead of an auto-created weekly folder (removed `client/src/week.ts`); folder summarize via `POST /api/folder/summarize` + `SummaryPanel.tsx`._
+_Last updated: 2026-06-20 (v1.1.2) — added an app logo (favicon + sidebar), a last-edited timestamp in the toolbar header, and Esc-to-preview in edit mode. Also cut autocomplete latency ~2-4x by disabling thinking (`MAX_THINKING_TOKENS=0`) on the haiku call. Details in **Current state** below._
 
 ---
 
@@ -12,9 +12,21 @@ _Last updated: 2026-06-20 — added an **app logo** (`client/public/noter-icon.s
 
 Working and verified end-to-end:
 
-- **Real-time autocomplete** — ghost-text-on-pause (~900ms debounce). Suggestion shows in a
-  bar below the editor; Tab accepts, Esc dismisses. Minimal corrections only (typos,
-  abbreviations) — never invents content.
+- **Real-time autocomplete** — ghost-text-on-pause (~900ms debounce). The suggestion shows in
+  a **floating card anchored just below the line the caret is on** (flips above the line near
+  the editor's bottom edge, follows textarea scroll), so it appears where you're typing rather
+  than pinned to the bottom of the pane. Tab accepts, Esc dismisses. Caret pixel position is
+  measured via a hidden mirror-div (`caretCoords` in `Editor.tsx`); the card is absolutely
+  positioned inside the `position: relative` `.editor` box (`.suggestion-pop`). Minimal
+  corrections only (typos, abbreviations) — never invents content. **Undo an accept**: right
+  after accepting a suggestion, `⌘Z`/`Ctrl+Z` reverts just that replacement (React value
+  changes don't enter the textarea's native undo stack, so `Editor.tsx` snapshots the
+  pre-accept state in `lastAcceptRef` and restores it; any manual keystroke clears the
+  snapshot so native undo resumes). **Thinking disabled for speed**: the autocomplete
+  `claude -p` call runs with `MAX_THINKING_TOKENS=0` (via `runClaude`'s `disableThinking`
+  option, which sets it in the child env). Haiku was emitting ~130 hidden thinking tokens for
+  a ~5-token answer; disabling it cut per-call API time from ~1.5-4s to ~0.9s (warm endpoint
+  ~1.3s) with identical output. Sanitize/summarize keep thinking on.
 - **Rendered (read) mode** — formatted-Markdown view (`react-markdown` + `remark-gfm`) shown
   alongside the raw textarea. A toolbar **Preview/Edit** toggle switches between them. Notes open
   in rendered mode and auto-switch to rendered after a sanitize; new blank notes start in edit
@@ -69,7 +81,8 @@ Working and verified end-to-end:
   in the viewer's local timezone (`GET /api/note` returns the file `mtime`; refreshed on save).
 - **Branding** — inline-SVG app logo (note page + blinking green caret) as the browser favicon
   and beside the "Noter" sidebar title (`client/public/noter-icon.svg`).
-- **Keyboard shortcuts** — `⌘S` save, `⌘N` new (blank, unsaved) note, `⌘K`/`⌘F` focus search.
+- **Keyboard shortcuts** — `⌘S` save, `⌘N` new (blank, unsaved) note, `⌘K`/`⌘F` focus search,
+  `Tab` accept autocomplete, `⌘Z` undo a just-accepted autocomplete (in the editor).
 - **Persistence** — notes saved under `notes/` as `.md`; folders are subdirectories; trash is
   a hidden `notes/.trash/` + `trash.json` manifest.
 
@@ -84,6 +97,10 @@ build-verified, not yet click-tested in the browser.
 - **LLM backend = `claude -p` (Claude Code CLI, headless)**, NOT the Anthropic API. Uses the
   existing Claude Code login — no API key/billing. Swappable later without touching the UI.
   - Autocomplete → `--model haiku`; Sanitize → `--model claude-opus-4-8`.
+  - **Autocomplete latency fix** = disable thinking via `MAX_THINKING_TOKENS=0` in the child
+    env (the `--no-extended-thinking` CLI flag does NOT exist in this version — errors as an
+    unknown option). This was the dominant latency lever; the CLI process startup and the
+    ~6.6k-token default system prompt were not (system-prompt replacement showed no clear win).
   - **DO NOT use `--bare`** — on this enterprise/managed (BCG) account, auth comes through
     Claude Code settings (apiKeyHelper); `--bare` skips settings loading → "Not logged in".
     Confirmed working: `claude -p --model haiku --tools "" --output-format json`.

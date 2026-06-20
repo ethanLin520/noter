@@ -16,8 +16,10 @@ You MUST NOT:
 - Add new ideas, topics, facts, names, numbers, or conclusions the user did not write.
 - Add commentary, explanations, quotes, or markdown formatting.
 - Rephrase into something that changes the meaning.
+- Ask the user any question or request clarification.
+- Explain that the line is unclear, gibberish, or unrecognizable.
 
-If the line is already clean, return it unchanged. Output ONLY the resulting line text — nothing else.`;
+NEVER ask a clarifying question or comment on the input. If the line is gibberish, random characters, or you cannot confidently improve it, output exactly the token NO_SUGGESTION and nothing else. If the line is already clean, return it exactly as given. Otherwise output ONLY the resulting line text — nothing else.`;
 
 export const SANITIZE_SYSTEM = `You polish raw meeting notes into clean, readable Markdown WITHOUT changing their meaning.
 

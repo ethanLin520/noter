@@ -152,8 +152,12 @@ app.post(
       model: AUTOCOMPLETE_MODEL,
       appendSystemPrompt: AUTOCOMPLETE_SYSTEM,
       timeoutMs: 30_000,
+      disableThinking: true,
     });
-    res.json({ suggestion: r.result.trim() });
+    // The model emits NO_SUGGESTION when the line is gibberish or can't be
+    // confidently improved; map that to an empty suggestion (client shows none).
+    const out = r.result.trim();
+    res.json({ suggestion: out === "NO_SUGGESTION" ? "" : out });
   }),
 );
 
