@@ -852,6 +852,7 @@ body {
 .modal-backdrop {
   position: fixed;
   inset: 0;
+  z-index: 100;
   background: rgba(20, 20, 20, 0.35);
   display: flex;
   align-items: center;

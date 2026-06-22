@@ -4,7 +4,7 @@ Local, personal note-taking app for work meetings. Type fast/shorthand notes, ge
 real-time autocomplete corrections and a post-meeting "sanitize" polish. Notes are saved
 as `.md` files on disk. Local-only, single-user, no auth, no deploy.
 
-_Last updated: 2026-06-20 (v1.1.2) — added an app logo (favicon + sidebar), a last-edited timestamp in the toolbar header, and Esc-to-preview in edit mode. Also cut autocomplete latency ~2-4x by disabling thinking (`MAX_THINKING_TOKENS=0`) on the haiku call. Details in **Current state** below._
+_Last updated: 2026-06-22 — sorting now uses **last edit (mtime)** for both notes and folders (sort modes renamed `created-*` → `edited-*`; folders ordered by their latest-edited note, alphabetical only in `name` mode); gave the confirm-dialog backdrop a `z-index` so it sits above the editor/popovers. Prior: 2026-06-20 (v1.1.2) — added an app logo (favicon + sidebar), a last-edited timestamp in the toolbar header, and Esc-to-preview in edit mode. Also cut autocomplete latency ~2-4x by disabling thinking (`MAX_THINKING_TOKENS=0`) on the haiku call. Details in **Current state** below._
 
 ---
 
@@ -61,11 +61,13 @@ Working and verified end-to-end:
   **Delete is a confirm modal** (`ConfirmDialog` in `client/src/Dialog.tsx`) with a red Delete
   button; same dialog backs the recycle bin's Delete-forever / Empty-bin. No more native
   `window.prompt` / `window.confirm`.
-- **Note sorting** — notes sort by **creation date, newest first** by default. A small button in
-  the sidebar actions cycles the order: Newest first (`↓`) → Oldest first (`↑`) → Name A–Z (`A`).
-  Server-side (`GET /api/tree?sort=created-desc|created-asc|name`, default `created-desc`, uses
-  file birthtime); the choice persists in `localStorage` (`sortMode`). Folders themselves stay
-  name-sorted; sort applies to notes within Unfiled and within each folder.
+- **Sorting** — both notes and folders sort by **last edit (mtime), most recent first** by
+  default. A small button in the sidebar actions cycles the order: Last edited (`↓`) → Least
+  recently edited (`↑`) → Name A–Z (`A`). Server-side
+  (`GET /api/tree?sort=edited-desc|edited-asc|name`, default `edited-desc`, uses file mtime);
+  the choice persists in `localStorage` (`sortMode`). Sort applies to notes within Unfiled and
+  within each folder. **Folders follow the toggle too**: in `name` mode alphabetical, otherwise
+  ordered by the **latest edit (mtime) of any note in the folder** (empty folders sort oldest).
 - **Drag-and-drop** — drag a note onto a folder (or "Unfiled") to move it. Menu move still works.
 - **Resizable sidebar** — drag the sidebar/main boundary to resize (160–520px); width persists
   in `localStorage` (`sidebarWidth`). Handled in `App.tsx` (`.sidebar-resizer` overlay).

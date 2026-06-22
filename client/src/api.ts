@@ -92,9 +92,9 @@ export interface TrashItem {
   deletedAt: string;
 }
 
-export type SortMode = "created-desc" | "created-asc" | "name";
+export type SortMode = "edited-desc" | "edited-asc" | "name";
 
-export async function getTree(sort: SortMode = "created-desc"): Promise<Tree> {
+export async function getTree(sort: SortMode = "edited-desc"): Promise<Tree> {
   const res = await fetch(`/api/tree?sort=${sort}`);
   if (!res.ok) throw new Error("failed to load notes");
   return (await res.json()) as Tree;

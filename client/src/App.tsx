@@ -67,7 +67,7 @@ function initialSidebarWidth(): number {
 
 function initialSortMode(): SortMode {
   const stored = localStorage.getItem("sortMode");
-  return stored === "created-asc" || stored === "name" ? stored : "created-desc";
+  return stored === "edited-asc" || stored === "name" ? stored : "edited-desc";
 }
 
 export default function App() {

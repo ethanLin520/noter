@@ -266,13 +266,13 @@ app.post(
 
 // --- Notes & folders: file management ---------------------------------------
 
-type SortMode = "created-desc" | "created-asc" | "name";
+type SortMode = "edited-desc" | "edited-asc" | "name";
 
 function parseSort(raw: unknown): SortMode {
-  return raw === "created-asc" || raw === "name" ? raw : "created-desc";
+  return raw === "edited-asc" || raw === "name" ? raw : "edited-desc";
 }
 
-/** Sort `.md` filenames in `dir` by the chosen mode. "created" uses file birthtime. */
+/** Sort `.md` filenames in `dir` by the chosen mode. "edited" uses file mtime. */
 async function sortNotes(dir: string, names: string[], sort: SortMode): Promise<string[]> {
   if (sort === "name") return [...names].sort((a, b) => a.localeCompare(b));
   const withTime = await Promise.all(
@@ -280,14 +280,14 @@ async function sortNotes(dir: string, names: string[], sort: SortMode): Promise<
       let t = 0;
       try {
         const s = await fs.stat(path.join(dir, name));
-        t = s.birthtimeMs || s.ctimeMs;
+        t = s.mtimeMs;
       } catch {
         /* missing/unreadable file sorts as oldest */
       }
       return { name, t };
     }),
   );
-  withTime.sort((a, b) => (sort === "created-asc" ? a.t - b.t : b.t - a.t));
+  withTime.sort((a, b) => (sort === "edited-asc" ? a.t - b.t : b.t - a.t));
   return withTime.map((x) => x.name);
 }
 
@@ -300,6 +300,22 @@ async function listMd(dir: string, sort: SortMode): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/** Latest edit time (mtime, ms) among `names` in `dir`; 0 if none/unreadable. */
+async function latestMtime(dir: string, names: string[]): Promise<number> {
+  let latest = 0;
+  await Promise.all(
+    names.map(async (name) => {
+      try {
+        const s = await fs.stat(path.join(dir, name));
+        if (s.mtimeMs > latest) latest = s.mtimeMs;
+      } catch {
+        /* missing/unreadable file is ignored */
+      }
+    }),
+  );
+  return latest;
 }
 
 // Full sidebar state in one call.
@@ -317,15 +333,27 @@ app.get(
 
     const folderNames = entries
       .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-      .map((e) => e.name)
-      .sort();
+      .map((e) => e.name);
 
-    const folders = await Promise.all(
-      folderNames.map(async (name) => ({
-        name,
-        notes: await listMd(path.join(NOTES_DIR, name), sort),
-      })),
+    const folderList = await Promise.all(
+      folderNames.map(async (name) => {
+        const dir = path.join(NOTES_DIR, name);
+        const notes = await listMd(dir, sort);
+        return { name, notes, latest: await latestMtime(dir, notes) };
+      }),
     );
+
+    // Folder order follows the active sort: by name alphabetically, otherwise
+    // by the latest edit time of the folder's notes (empty folders sort oldest).
+    if (sort === "name") {
+      folderList.sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      folderList.sort((a, b) =>
+        sort === "edited-asc" ? a.latest - b.latest : b.latest - a.latest,
+      );
+    }
+
+    const folders = folderList.map(({ name, notes }) => ({ name, notes }));
 
     const trash = await readManifest();
     res.json({ unfiled, folders, trashCount: trash.length });

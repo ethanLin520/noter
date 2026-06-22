@@ -41,10 +41,10 @@ interface SidebarProps {
 const stripExt = (name: string) => name.replace(/\.md$/i, "");
 
 // Click the sort button to cycle through these in order.
-const SORT_CYCLE: SortMode[] = ["created-desc", "created-asc", "name"];
+const SORT_CYCLE: SortMode[] = ["edited-desc", "edited-asc", "name"];
 const SORT_META: Record<SortMode, { label: string; icon: string }> = {
-  "created-desc": { label: "Newest first", icon: "↓" },
-  "created-asc": { label: "Oldest first", icon: "↑" },
+  "edited-desc": { label: "Last edited", icon: "↓" },
+  "edited-asc": { label: "Least recently edited", icon: "↑" },
   name: { label: "Name (A–Z)", icon: "A" },
 };
 
