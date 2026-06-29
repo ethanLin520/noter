@@ -10,8 +10,9 @@ client/tsconfig.tsbuildinfo
 *.log
 dev.log
 
-# Runtime / user data (local notes store)
+# Runtime / user data (per-user notes store + SQLite auth DB)
 notes/
+notes/.noter.db*
 
 # Environment / secrets
 .env

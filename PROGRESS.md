@@ -1,10 +1,26 @@
 # Noter — Progress
 
-Local, personal note-taking app for work meetings. Type fast/shorthand notes, get
-real-time autocomplete corrections and a post-meeting "sanitize" polish. Notes are saved
-as `.md` files on disk. Local-only, single-user, no auth, no deploy.
+Hosted, **multi-user** note-taking app for work meetings. Type fast/shorthand notes, get
+real-time autocomplete corrections and a post-meeting "sanitize" polish, and export to
+Markdown/PDF. Email+password login; each user's notes are isolated under `notes/<userId>/`.
+Small team, admin-created accounts (no public signup). LLM still via `claude -p` under one
+shared server login.
 
-_Last updated: 2026-06-22 — sorting now uses **last edit (mtime)** for both notes and folders (sort modes renamed `created-*` → `edited-*`; folders ordered by their latest-edited note, alphabetical only in `name` mode); gave the confirm-dialog backdrop a `z-index` so it sits above the editor/popovers. Prior: 2026-06-20 (v1.1.2) — added an app logo (favicon + sidebar), a last-edited timestamp in the toolbar header, and Esc-to-preview in edit mode. Also cut autocomplete latency ~2-4x by disabling thinking (`MAX_THINKING_TOKENS=0`) on the haiku call. Details in **Current state** below._
+_Last updated: 2026-06-28 — **security hardening pass** (post code-review): PDF export now runs
+Chromium with `--host-resolver-rules=MAP * 0.0.0.0` (blocks SSRF from attacker-controlled note
+markdown) + a 2-render concurrency cap; login always runs scrypt (dummy credential for unknown
+emails, kills the user-enumeration timing channel) and is rate-limited (10/IP/15min); session
+cookie `secure` now derives from `req.secure` (X-Forwarded-Proto) instead of `NODE_ENV`; prod CORS
+defaults to no cross-origin (was reflect-any `true`); `ensureUserDir` memoized (was a blocking
+`mkdirSync` every request); `userRootFor` moved to `auth.ts` as the single per-user-root source.
+Earlier 2026-06-28 — **went multi-user/hosted**: added email+password auth (scrypt +
+opaque httpOnly session cookie, users/sessions in SQLite `notes/.noter.db`), per-user note
+isolation under `notes/<userId>/` (`resolveInNotes` now takes a user root; all handlers + trash
+threaded), a `requireAuth` gate on every data/AI route, an admin `add-user` CLI, a login screen
++ logout, and note **export** (Markdown via client Blob download; PDF server-rendered with
+`md-to-pdf` + `github-markdown-css`). `claude.ts` unchanged (shared login). Prod: Express serves
+the built client; CORS tightened + `trust proxy`. Verified end-to-end via curl (gating, login,
+isolation, CRUD, real `%PDF`). Prior: 2026-06-22 — sorting now uses **last edit (mtime)** for both notes and folders (sort modes renamed `created-*` → `edited-*`; folders ordered by their latest-edited note, alphabetical only in `name` mode); gave the confirm-dialog backdrop a `z-index` so it sits above the editor/popovers. Prior: 2026-06-20 (v1.1.2) — added an app logo (favicon + sidebar), a last-edited timestamp in the toolbar header, and Esc-to-preview in edit mode. Also cut autocomplete latency ~2-4x by disabling thinking (`MAX_THINKING_TOKENS=0`) on the haiku call. Details in **Current state** below._
 
 ---
 
@@ -12,6 +28,27 @@ _Last updated: 2026-06-22 — sorting now uses **last edit (mtime)** for both no
 
 Working and verified end-to-end:
 
+- **Multi-user auth** — email+password login gates the app. Passwords hashed with built-in
+  `crypto.scrypt`; sessions are opaque `randomBytes` tokens in an httpOnly, SameSite=Lax cookie
+  (`secure` set from `req.secure`/X-Forwarded-Proto, so it's on behind the TLS proxy), stored server-side in SQLite (`notes/.noter.db`, override via `NOTER_DB`).
+  `auth.ts` owns the DB, hashing, sessions, and the `requireAuth` middleware; `index.ts` mounts
+  `POST /api/login`, `POST /api/logout`, `GET /api/me`, a public `GET /api/ping`, then
+  `app.use("/api", requireAuth)` so every data/AI route below requires a session. Accounts are
+  created by an admin via `npm run add-user -- <email> <pw> "Name" [--admin]` (no signup UI).
+  Client gates on mount via `GET /api/me` (loading→login→app); a 401 from any call bounces to
+  login (App stays mounted so unsaved edits survive a re-login). Logout + current user sit in the
+  sidebar footer. curl-verified: ping public, data routes 401 without a cookie, login sets the
+  cookie, wrong password 401, logout invalidates.
+- **Per-user storage** — each user's notes live under `notes/<userId>/` (own unfiled notes,
+  folder subdirs, and `.trash/` + `trash.json`). `resolveInNotes(userRoot, …)` re-anchors the
+  traversal guard per-user; every fs handler derives `userRoot = notes/<req.user.id>` first.
+  `userId` is a random `base64url` id (not the email). Verified: two users see only their own
+  notes on disk and via `/api/tree`.
+- **Export** — toolbar **.md** downloads the raw markdown client-side (Blob, no server). **PDF**
+  POSTs the current markdown to `POST /api/export/pdf`, rendered server-side by `md-to-pdf`
+  styled with `github-markdown-css` (light theme, `.markdown-body`), returned as a `Buffer`
+  (wrap the Uint8Array or Express JSON-serializes it). Both disabled on an empty note; PDF shows
+  a busy state. Verified: returns a real `%PDF-1.4` document.
 - **Real-time autocomplete** — ghost-text-on-pause (~900ms debounce). The suggestion shows in
   a **floating card anchored just below the line the caret is on** (flips above the line near
   the editor's bottom edge, follows textarea scroll), so it appears where you're typing rather
@@ -96,6 +133,19 @@ build-verified, not yet click-tested in the browser.
 
 ## Key decisions
 
+- **Multi-user model** = small team, **admin-created accounts** (no public signup) → a CLI
+  (`add-user`) over a signup endpoint/UI. **Auth** = email+password with `crypto.scrypt` (no
+  bcrypt dep) + **opaque server-side session tokens** in SQLite (revocable; chosen over stateless
+  JWT). Cookie parsed by hand (no `cookie-parser` dep). **Storage** = keep notes on the
+  **filesystem**, namespaced `notes/<userId>/` (reuses all existing fs code via a per-user
+  `resolveInNotes` root) rather than moving notes into a DB — only users/sessions are in SQLite.
+- **LLM under multi-user** = keep `claude -p` under **one shared server login** (zero change to
+  `claude.ts`); all users' AI calls flow through it. Tradeoff accepted: shared billing/limits,
+  and `--resume` sessionIds aren't namespaced per-user (low risk for a trusted team — ids are
+  opaque and returned only to the originating client; documented, not enforced).
+- **Export** = Markdown client-side (Blob, zero deps); **PDF server-side** via `md-to-pdf` +
+  `github-markdown-css` (per user request) — accepts the Puppeteer/Chromium dependency weight in
+  exchange for consistent GitHub-style output, and keeps the client free of print CSS.
 - **LLM backend = `claude -p` (Claude Code CLI, headless)**, NOT the Anthropic API. Uses the
   existing Claude Code login — no API key/billing. Swappable later without touching the UI.
   - Autocomplete → `--model haiku`; Sanitize → `--model claude-opus-4-8`.
@@ -148,9 +198,23 @@ build-verified, not yet click-tested in the browser.
   `GET /api/note`, `POST /api/note/{create,rename,move,delete}`, `POST /api/folder/{create,rename,delete}`,
   `GET /api/trash`, `POST /api/trash/{restore,delete,empty}`. Holds path/trash helpers
   (`safeFileName`, `safeFolderName`, `resolveInNotes`, `readManifest`/`writeManifest`,
-  `makeId`, `uniqueName`, `listMd`). `NOTES_DIR` = `<root>/notes`, `PORT` = 23456.
+  `makeId`, `uniqueName`, `listMd`). **Now also**: public `GET /api/ping` + `POST /api/login` /
+  `POST /api/logout` / `GET /api/me`, then `app.use("/api", requireAuth)` gating all routes below;
+  `POST /api/export/pdf` (md-to-pdf); per-user threading — every fs handler starts with
+  `userRoot = userRootFor(req.user!.id)` and `resolveInNotes`/`readManifest`/`writeManifest` take
+  explicit paths under it; CORS restricted + `trust proxy`; in prod serves `client/dist` + SPA
+  fallback. `NOTES_DIR` (imported from `auth.ts`) = `<root>/notes` (the parent of per-user dirs);
+  `PORT` = 23456.
 - **`claude.ts`** — the ONLY module that talks to the LLM. `runClaude(opts)` spawns `claude -p`
-  via `child_process.spawn`. Has an explicit "do NOT use `--bare`" comment.
+  via `child_process.spawn`. Has an explicit "do NOT use `--bare`" comment. **Unchanged by the
+  multi-user work** (runs under the shared server login, user-agnostic).
+- **`auth.ts`** — auth + storage roots. Inits SQLite (`users`, `sessions`) at `notes/.noter.db`
+  (or `NOTER_DB`); `hashPassword`/`verifyPassword` (scrypt + `timingSafeEqual`); `createUser`,
+  `getUserByEmail`; `createSession`/`getSessionUser`/`deleteSession`/`pruneExpiredSessions`;
+  `requireAuth` (cookie → `req.user` or 401, + `ensureUserDir`); `readCookie`; exports
+  `NOTES_DIR`, `SESSION_COOKIE`, `publicUser`, and augments `Express.Request` with `user`.
+- **`add-user.ts`** — admin CLI (`npm run add-user -- <email> <pw> "Name" [--admin]`) → `createUser`
+  against the same DB. No signup endpoint/UI.
 - **`prompts.ts`** — `AUTOCOMPLETE_SYSTEM`, `SANITIZE_SYSTEM`, `SUMMARIZE_SYSTEM` guardrail
   prompts + the `buildAutocompletePrompt` / `buildSanitizePrompt` / `buildSanitizeReplyPrompt` /
   `buildFolderSummaryPrompt` builders.
@@ -159,7 +223,10 @@ build-verified, not yet click-tested in the browser.
 - **`App.tsx`** — top-level state: open note `{folder, name}`, title, content, tree, modals,
   `saveState`, search query/results. `refreshTree`, `saveNow` (the single save path: rename-in-
   place + write), debounced autosave + `beforeunload` guard, debounced search, `newNote`, global
-  keydown shortcuts, `handleOpen`, `handleCurrentChanged`, `handleAcceptSanitized`.
+  keydown shortcuts, `handleOpen`, `handleCurrentChanged`, `handleAcceptSanitized`. **Now also**
+  hosts auth state (`loading`/`out`/`in`): bootstraps via `me()` on mount, registers the 401
+  handler, gates the render (spinner → `<Login>` → app), guards the tree load on `auth==="in"`,
+  and adds `handleLogout` + the toolbar **.md**/**PDF** export buttons (`pdfBusy`).
 - **`Sidebar.tsx`** — `+ Note` / `+ Folder`, collapsible folders, "Unfiled" group, per-note
   `⋯` menu (Rename / Delete / Move to…), per-folder summarize(✨)+add(＋)+rename(✎)+delete,
   recycle-bin row with count. **Adding and renaming** use inline input rows (`InlineInput`
@@ -169,7 +236,8 @@ build-verified, not yet click-tested in the browser.
   `renaming` state; the note link / folder name becomes an `InlineInput` (prefilled + selected).
   **Delete** uses `ConfirmDialog` (`dialog` state). Hosts drag-and-drop (note rows draggable;
   folders + Unfiled are drop targets) and the search box + results list (controlled by `App`;
-  results replace the tree when a query is active).
+  results replace the tree when a query is active). Footer row shows the signed-in user
+  (`user` prop) + a sign-out button (`onLogout`).
 - **`Editor.tsx`** — in edit mode: textarea + suggestion bar (debounced autocomplete with
   AbortController); in rendered mode: scrollable `react-markdown`/`remark-gfm` view that switches
   to edit on click — the click maps to a source caret offset (`rehypeSourceOffset`/`data-pos` +
@@ -188,15 +256,25 @@ build-verified, not yet click-tested in the browser.
 - **`Dialog.tsx`** — `ConfirmDialog`: reusable confirm modal (Enter confirms, Esc/backdrop cancels;
   `danger` prop → red primary button). Used for note/folder delete (Sidebar) and recycle-bin purges.
 - **`TrashPanel.tsx`** — modal: list trashed items with Restore / Delete forever / Empty bin.
-- **`api.ts`** — typed fetch helpers + `Tree` / `TrashItem` types. All paths go via `/api` proxy.
+- **`api.ts`** — typed fetch helpers + `Tree` / `TrashItem` / `Me` types. All paths go via `/api`
+  proxy and send `credentials: "include"`. A shared `check(res)` fires a registered
+  `setUnauthorizedHandler` on any 401 (→ App shows login). `me`/`login` bypass `check` (their 401
+  means "logged out"/"bad credentials", not a dropped session). `exportPdf` returns the PDF blob.
+- **`Login.tsx`** — full-screen email+password `<form>` reusing modal/button/input styles;
+  loading/disabled + inline error; `onSuccess(user)` lifts state to App.
+- **`export.ts`** — `downloadMarkdown(name, md)` (Blob → `<a download>`), `exportNotePdf(name, md)`
+  (calls `api.exportPdf` then downloads), `safeFilename`.
 - **`styles.css`** — minimal warm palette (cream bg, green accent); sidebar, folders, popover
   menu, drag-over highlight, modal, trash list, spinner.
 - **`vite.config.ts`** — react plugin, port 12345, proxy `/api` → `http://localhost:23456`.
 
 ### Other
-- **`notes/`** — saved notes (`.md`), folders (subdirs), `.trash/` recycle bin + `trash.json`.
+- **`notes/`** — per-user roots `notes/<userId>/` (each with `.md` notes, folder subdirs,
+  `.trash/` + `trash.json`) plus the SQLite auth DB `notes/.noter.db` (+ `-wal`/`-shm`). All
+  gitignored.
 - **`package.json`** (root) — scripts: `dev` (both via concurrently), `dev:server`, `dev:client`,
-  `build:client`, `install:all`.
+  `build` (= build:client), `build:client`, `start` (prod), `add-user`, `install:all`. New deps:
+  `better-sqlite3`, `md-to-pdf`, `github-markdown-css` (+ `@types/better-sqlite3`).
 - Plan/spec lives at `~/.claude/plans/i-want-to-build-humming-gizmo.md`.
 
 ---
@@ -204,13 +282,15 @@ build-verified, not yet click-tested in the browser.
 ## Run it
 
 ```bash
-cd /Users/linethan/code/noter
-npm run dev          # both servers (foreground); open http://localhost:12345
+cd /Users/ethan/code/noter
+npm run install:all  # first-time deps (root + client; pulls Chromium for md-to-pdf)
+npm run add-user -- you@bcg.com 'password' "Your Name"   # create an account (no signup UI)
+npm run dev          # both servers (foreground); open http://localhost:12345 → log in
 # individually:
 npm run dev:server   # backend  :23456
 npm run dev:client   # frontend :12345
-# first-time deps:
-npm run install:all
+# production (one process serves built client + API on :23456, behind a TLS reverse proxy):
+npm run build && npm start
 ```
 
 Background (via `Makefile`):
@@ -242,6 +322,14 @@ Release v1.1.2
 
 ## Open TODOs
 
+- [ ] **Browser click-through** of the new auth + export flows (login screen, wrong-password
+      error, logout, mid-session 401 bounce, `.md`/PDF buttons) — curl-verified end-to-end, not
+      yet clicked in the browser.
+- [ ] **Legacy notes migration** — old flat `notes/*.md` (if any) are not auto-moved into a user
+      dir; document the manual `mv notes/*.md notes/<id>/` step or add an `add-user --claim-legacy`.
+- [ ] **Optional hardening (not built, trusted-team assumption)**: rate-limit `/api/login`;
+      namespace/verify `--resume` sessionId ownership (store `sessionId→user_id`) if the trust
+      model tightens. Read the cleartext password off a hidden prompt in `add-user` instead of argv.
 - [ ] **Browser click-test drag-and-drop** (only build-verified so far).
 - [ ] **Browser click-through** of ghost-text accept (Tab) and the Sanitize modal
       (questions + preview) — never done interactively.
@@ -256,6 +344,7 @@ Release v1.1.2
 
 ## Next steps
 
-1. Run `npm run dev` and manually exercise: type→pause→Tab; sanitize a note; create/rename/
-   move (menu + drag)/delete; restore + empty bin; confirm legacy flat note opens.
-2. Resolve the title-vs-rename behavior decision above.
+1. `npm run add-user …`, then `npm run dev` and click through the browser: log in, create/edit
+   notes, sanitize, summarize, `.md` + PDF export, logout. Confirm a second account is isolated.
+2. Decide hosting: build + `npm start` behind a TLS-terminating reverse proxy (Caddy/nginx) so
+   `secure` cookies work (`trust proxy` is already on). Optionally add a Dockerfile.

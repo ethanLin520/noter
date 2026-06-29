@@ -8,6 +8,7 @@ import {
   moveNote,
   renameFolder,
   renameNote,
+  type Me,
   type SearchResult,
   type SortMode,
   type Tree,
@@ -21,6 +22,9 @@ interface OpenNote {
 interface SidebarProps {
   tree: Tree;
   current: OpenNote | null;
+  /** The signed-in user (shown in the footer with a logout control). */
+  user: Me | null;
+  onLogout: () => void;
   onOpen: (folder: string, name: string) => void;
   onOpenTrash: () => void;
   /** Re-fetch the tree after a mutation. */
@@ -86,6 +90,8 @@ function InlineInput({
 export default function Sidebar({
   tree,
   current,
+  user,
+  onLogout,
   onOpen,
   onOpenTrash,
   reload,
@@ -545,6 +551,17 @@ export default function Sidebar({
         🗑 Recycle bin
         {tree.trashCount > 0 && <span className="badge">{tree.trashCount}</span>}
       </button>
+
+      {user && (
+        <div className="sidebar-user">
+          <span className="sidebar-user-name" title={user.email}>
+            {user.displayName || user.email}
+          </span>
+          <button className="icon-btn" onClick={onLogout} title="Sign out">
+            ⎋
+          </button>
+        </div>
+      )}
 
       {dialog && (
         <ConfirmDialog

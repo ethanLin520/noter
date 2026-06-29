@@ -1,18 +1,85 @@
 // Typed fetch helpers for the backend. All paths go through the Vite /api proxy.
+// Every request sends the session cookie (`credentials: "include"`); a 401 from
+// any call notifies the registered handler so the app can drop back to login.
+
+let onUnauthorized: (() => void) | null = null;
+
+/** App registers a callback here to react to a dropped/expired session. */
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  onUnauthorized = fn;
+}
+
+/** Notify + throw on 401 so a single code path bounces the app to login. */
+function check(res: Response): Response {
+  if (res.status === 401) {
+    onUnauthorized?.();
+    throw new Error("unauthorized");
+  }
+  return res;
+}
+
+/** fetch + session cookie + 401 bounce + server-error-to-throw; returns the raw Response. */
+async function request(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(path, { credentials: "include", ...init });
+  check(res);
+  if (!res.ok) {
+    const msg = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(msg.error ?? `request failed: ${res.status}`);
+  }
+  return res;
+}
 
 async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(path, {
+  const res = await request(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal,
   });
-  if (!res.ok) {
-    const msg = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(msg.error ?? `request failed: ${res.status}`);
-  }
   return res.json() as Promise<T>;
 }
+
+// --- Auth -------------------------------------------------------------------
+
+// Mirrors the server's publicUser() shape (server/src/auth.ts). Keep in sync.
+export interface Me {
+  id: string;
+  email: string;
+  displayName: string;
+  role: string;
+}
+
+/** Current user, or null when not logged in (401 is expected, not an error). */
+export async function me(): Promise<Me | null> {
+  const res = await fetch("/api/me", { credentials: "include" });
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error("failed to load session");
+  const data = (await res.json()) as { user: Me };
+  return data.user;
+}
+
+/** Log in. Bypasses check(): a 401 here is bad credentials, not a dropped session. */
+export async function login(email: string, password: string): Promise<Me> {
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ email, password }),
+  });
+  if (res.status === 401) throw new Error("Invalid email or password");
+  if (!res.ok) {
+    const msg = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(msg.error ?? `login failed: ${res.status}`);
+  }
+  const data = (await res.json()) as { user: Me };
+  return data.user;
+}
+
+export async function logout(): Promise<void> {
+  await fetch("/api/logout", { method: "POST", credentials: "include" });
+}
+
+// --- LLM features -----------------------------------------------------------
 
 export async function autocomplete(
   context: string,
@@ -62,6 +129,18 @@ export function refineSummary(
   });
 }
 
+// --- Export -----------------------------------------------------------------
+
+/** Server-rendered PDF (md-to-pdf + github-markdown-css). Returns the PDF blob. */
+export async function exportPdf(name: string, markdown: string): Promise<Blob> {
+  const res = await request("/api/export/pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, markdown }),
+  });
+  return res.blob();
+}
+
 // --- Search -----------------------------------------------------------------
 
 export interface SearchResult {
@@ -71,7 +150,11 @@ export interface SearchResult {
 }
 
 export async function searchNotes(q: string, signal?: AbortSignal): Promise<SearchResult[]> {
-  const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal });
+  const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
+    signal,
+    credentials: "include",
+  });
+  check(res);
   if (!res.ok) throw new Error("search failed");
   const data = (await res.json()) as { results: SearchResult[] };
   return data.results;
@@ -95,7 +178,8 @@ export interface TrashItem {
 export type SortMode = "edited-desc" | "edited-asc" | "name";
 
 export async function getTree(sort: SortMode = "edited-desc"): Promise<Tree> {
-  const res = await fetch(`/api/tree?sort=${sort}`);
+  const res = await fetch(`/api/tree?sort=${sort}`, { credentials: "include" });
+  check(res);
   if (!res.ok) throw new Error("failed to load notes");
   return (await res.json()) as Tree;
 }
@@ -118,7 +202,8 @@ export interface LoadedNote {
 
 export async function loadNote(folder: string, name: string): Promise<LoadedNote> {
   const params = new URLSearchParams({ folder, name });
-  const res = await fetch(`/api/note?${params.toString()}`);
+  const res = await fetch(`/api/note?${params.toString()}`, { credentials: "include" });
+  check(res);
   if (!res.ok) throw new Error("failed to load note");
   const data = (await res.json()) as { markdown: string; mtime: string };
   return { markdown: data.markdown, mtime: data.mtime };
@@ -167,7 +252,8 @@ export function deleteFolder(name: string): Promise<{ ok: boolean }> {
 }
 
 export async function getTrash(): Promise<TrashItem[]> {
-  const res = await fetch("/api/trash");
+  const res = await fetch("/api/trash", { credentials: "include" });
+  check(res);
   if (!res.ok) throw new Error("failed to load trash");
   const data = (await res.json()) as { items: TrashItem[] };
   return data.items;

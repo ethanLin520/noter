@@ -981,3 +981,59 @@ body {
     transform: rotate(360deg);
   }
 }
+
+/* --- Login screen --- */
+.login-screen {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: 20px;
+}
+
+.login-card {
+  width: min(380px, 100%);
+}
+
+.login-card .logo-icon {
+  width: 22px;
+  height: 22px;
+  vertical-align: -5px;
+  margin-right: 6px;
+}
+
+.login-field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.login-field > span {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.login-field .search-input {
+  width: 100%;
+}
+
+/* --- Sidebar user / logout footer --- */
+.sidebar-user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 6px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sidebar-user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

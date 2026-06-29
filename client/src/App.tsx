@@ -7,13 +7,19 @@ import TrashPanel from "./TrashPanel";
 import {
   getTree,
   loadNote,
+  logout,
+  me,
   renameNote,
   saveNote,
   searchNotes,
+  setUnauthorizedHandler,
+  type Me,
   type SearchResult,
   type SortMode,
   type Tree,
 } from "./api";
+import Login from "./Login";
+import { downloadMarkdown, exportNotePdf } from "./export";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -21,6 +27,11 @@ interface OpenNote {
   folder: string;
   name: string;
 }
+
+type AuthState =
+  | { status: "loading" }
+  | { status: "out" }
+  | { status: "in"; user: Me };
 
 function defaultTitle(): string {
   const d = new Date();
@@ -71,6 +82,8 @@ function initialSortMode(): SortMode {
 }
 
 export default function App() {
+  const [auth, setAuth] = useState<AuthState>({ status: "loading" });
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
   const dragging = useRef(false);
   const [title, setTitle] = useState(defaultTitle());
@@ -101,7 +114,28 @@ export default function App() {
       .catch(() => setTree(EMPTY_TREE));
   }, [sortMode]);
 
-  useEffect(refreshTree, [refreshTree]);
+  // Auth bootstrap: check the session once on mount; register the global 401 hook
+  // so an expired session anywhere drops the app back to the login screen.
+  useEffect(() => {
+    setUnauthorizedHandler(() => setAuth({ status: "out" }));
+    let alive = true;
+    me()
+      .then((u) => {
+        if (alive) setAuth(u ? { status: "in", user: u } : { status: "out" });
+      })
+      .catch(() => {
+        if (alive) setAuth({ status: "out" });
+      });
+    return () => {
+      alive = false;
+      setUnauthorizedHandler(null);
+    };
+  }, []);
+
+  // Load the tree once authenticated (and whenever the sort changes).
+  useEffect(() => {
+    if (auth.status === "in") refreshTree();
+  }, [auth.status, refreshTree]);
 
   const changeSort = useCallback((next: SortMode) => {
     setSortMode(next);
@@ -347,11 +381,41 @@ export default function App() {
     [summaryFolder, refreshTree, handleOpen, flash],
   );
 
+  const handleLogout = useCallback(async () => {
+    await logout();
+    setAuth({ status: "out" });
+  }, []);
+
+  const handleExportPdf = useCallback(async () => {
+    setPdfBusy(true);
+    try {
+      await exportNotePdf(title, notes);
+    } catch (e) {
+      flash(`PDF export failed: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setPdfBusy(false);
+    }
+  }, [title, notes, flash]);
+
+  // Auth gate (all hooks above run first). loading → spinner; out → login.
+  if (auth.status === "loading") {
+    return (
+      <div className="login-screen">
+        <div className="spinner" />
+      </div>
+    );
+  }
+  if (auth.status === "out") {
+    return <Login onSuccess={(user) => setAuth({ status: "in", user })} />;
+  }
+
   return (
     <div className="app" style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}>
       <Sidebar
         tree={tree}
         current={current}
+        user={auth.user}
+        onLogout={handleLogout}
         onOpen={handleOpen}
         onOpenTrash={() => setShowTrash(true)}
         reload={refreshTree}
@@ -406,6 +470,22 @@ export default function App() {
               title={mode === "edit" ? "Preview rendered Markdown" : "Back to editing"}
             >
               {mode === "edit" ? "Preview" : "Edit"}
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={() => downloadMarkdown(title, notes)}
+              disabled={notes.trim().length === 0}
+              title="Download as Markdown (.md)"
+            >
+              .md
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={handleExportPdf}
+              disabled={notes.trim().length === 0 || pdfBusy}
+              title="Export as PDF"
+            >
+              {pdfBusy ? "PDF…" : "PDF"}
             </button>
             <button className="btn-secondary" onClick={() => saveNow()}>
               Save
