@@ -12,13 +12,18 @@ import { spawn } from "node:child_process";
  * command: `claude -p --model <m> --tools "" --output-format json`.
  */
 
-export type ClaudeModel = "haiku" | "claude-opus-4-8" | string;
+export type ClaudeModel = "haiku" | "sonnet" | "claude-opus-4-8" | string;
+
+/** Reasoning budget passed to `claude -p --effort <level>`. */
+export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface RunClaudeOptions {
   /** The user-facing prompt. Passed as an argv element (no shell), so special
    *  characters and multi-KB notes are safe. */
   prompt: string;
   model: ClaudeModel;
+  /** Reasoning budget (`--effort`). Omit to use the model's default. */
+  effort?: ClaudeEffort;
   /** Guardrail appended to Claude Code's default system prompt. */
   appendSystemPrompt?: string;
   /** Resume a prior conversation to keep context (clarifying-question loop). */
@@ -59,6 +64,7 @@ export function runClaude(opts: RunClaudeOptions): Promise<RunClaudeResult> {
   const {
     prompt,
     model,
+    effort,
     appendSystemPrompt,
     sessionId,
     timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -66,6 +72,9 @@ export function runClaude(opts: RunClaudeOptions): Promise<RunClaudeResult> {
   } = opts;
 
   const args = ["-p", prompt, "--model", model, "--tools", "", "--output-format", "json"];
+  if (effort) {
+    args.push("--effort", effort);
+  }
   if (appendSystemPrompt) {
     args.push("--append-system-prompt", appendSystemPrompt);
   }

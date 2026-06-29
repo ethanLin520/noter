@@ -36,7 +36,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 23456);
 const PRODUCTION = process.env.NODE_ENV === "production";
 
-const AUTOCOMPLETE_MODEL = "haiku";
+const AUTOCOMPLETE_MODEL = "sonnet";
 const SANITIZE_MODEL = "claude-opus-4-8";
 // Summarizing a whole folder feeds many notes at once, so allow a longer run.
 const SUMMARIZE_TIMEOUT_MS = 300_000;
@@ -268,6 +268,7 @@ app.post(
     const r = await runClaude({
       prompt: buildAutocompletePrompt(String(context), currentLine),
       model: AUTOCOMPLETE_MODEL,
+      effort: "low",
       appendSystemPrompt: AUTOCOMPLETE_SYSTEM,
       timeoutMs: 30_000,
       disableThinking: true,

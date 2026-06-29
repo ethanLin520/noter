@@ -6,7 +6,7 @@ Markdown/PDF. Email+password login; each user's notes are isolated under `notes/
 Small team, admin-created accounts (no public signup). LLM still via `claude -p` under one
 shared server login.
 
-_Last updated: 2026-06-28 — **security hardening pass** (post code-review): PDF export now runs
+_Last updated: 2026-06-28 — **autocomplete model switch**: autocomplete now runs on **sonnet** with **`--effort low`** (new `effort` option on `runClaude` → `claude -p --effort <level>`), keeping thinking disabled (`MAX_THINKING_TOKENS=0`). Prior same-day: **security hardening pass** (post code-review): PDF export now runs
 Chromium with `--host-resolver-rules=MAP * 0.0.0.0` (blocks SSRF from attacker-controlled note
 markdown) + a 2-render concurrency cap; login always runs scrypt (dummy credential for unknown
 emails, kills the user-enumeration timing channel) and is rate-limited (10/IP/15min); session
@@ -59,11 +59,12 @@ Working and verified end-to-end:
   after accepting a suggestion, `⌘Z`/`Ctrl+Z` reverts just that replacement (React value
   changes don't enter the textarea's native undo stack, so `Editor.tsx` snapshots the
   pre-accept state in `lastAcceptRef` and restores it; any manual keystroke clears the
-  snapshot so native undo resumes). **Thinking disabled for speed**: the autocomplete
-  `claude -p` call runs with `MAX_THINKING_TOKENS=0` (via `runClaude`'s `disableThinking`
-  option, which sets it in the child env). Haiku was emitting ~130 hidden thinking tokens for
-  a ~5-token answer; disabling it cut per-call API time from ~1.5-4s to ~0.9s (warm endpoint
-  ~1.3s) with identical output. Sanitize/summarize keep thinking on.
+  snapshot so native undo resumes). **Model + speed tuning**: the autocomplete `claude -p`
+  call runs on **sonnet** with **`--effort low`** (`runClaude`'s `effort` option) and thinking
+  disabled via `MAX_THINKING_TOKENS=0` (`runClaude`'s `disableThinking` option, set in the
+  child env). The thinking-off tuning originated on haiku, which was emitting ~130 hidden
+  thinking tokens for a ~5-token answer; disabling it cut per-call API time from ~1.5-4s to
+  ~0.9s with identical output. Sanitize/summarize keep thinking on.
 - **Rendered (read) mode** — formatted-Markdown view (`react-markdown` + `remark-gfm`) shown
   alongside the raw textarea. A toolbar **Preview/Edit** toggle switches between them. Notes open
   in rendered mode and auto-switch to rendered after a sanitize; new blank notes start in edit
@@ -148,7 +149,9 @@ build-verified, not yet click-tested in the browser.
   exchange for consistent GitHub-style output, and keeps the client free of print CSS.
 - **LLM backend = `claude -p` (Claude Code CLI, headless)**, NOT the Anthropic API. Uses the
   existing Claude Code login — no API key/billing. Swappable later without touching the UI.
-  - Autocomplete → `--model haiku`; Sanitize → `--model claude-opus-4-8`.
+  - Autocomplete → `--model sonnet --effort low`; Sanitize → `--model claude-opus-4-8`.
+    (`runClaude` now has an `effort` option that maps to `claude -p --effort <level>`:
+    `low|medium|high|xhigh|max`.)
   - **Autocomplete latency fix** = disable thinking via `MAX_THINKING_TOKENS=0` in the child
     env (the `--no-extended-thinking` CLI flag does NOT exist in this version — errors as an
     unknown option). This was the dominant latency lever; the CLI process startup and the
